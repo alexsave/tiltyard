@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include "random.h"
+#include "rand.h"
 
 void test_random() {
     // call into random
