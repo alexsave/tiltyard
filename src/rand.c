@@ -3,7 +3,7 @@
 #include <stdio.h>
 // probably???
 // this feels wrong
-#include "random.h"
+#include "rand.h"
 
 // not a bad idea to have a typedef of like Rand -> uint64_t*
 
