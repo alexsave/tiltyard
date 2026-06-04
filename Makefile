@@ -13,12 +13,12 @@ clean:
 compile_out: clean
 	gcc -c -Iinclude src/rand.c -o out/rand
 	gcc -c -Iinclude src/pq.c -o out/pq
+	gcc -c -Iinclude src/fl.c -o out/fl
 
 # test relies on out
 test: compile_out
-	gcc -I include/ tests/main.c out/rand out/pq -o out/test && ./out/test
+	gcc -I include/ tests/main.c out/rand out/pq out/fl -o out/test && ./out/test
 
 main: compile_out
-	gcc -I include/ src/main.c out/rand out/pq -o ./tiltyard && ./tiltyard
-    
-    
+	gcc -I include/ src/main.c out/rand out/pq out/fl -o ./tiltyard && ./tiltyard
+
