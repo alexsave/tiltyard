@@ -17,6 +17,10 @@ PQ* pq_init(uint32_t capacity) {
 }
 
 void pq_push(PQ* pq, uint64_t event) {
+    // shoudl return status
+    if (pq->current >= pq->heap[0])
+        return;
+    
     uint32_t run = pq->current;
 
     while (1) {
