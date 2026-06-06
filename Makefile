@@ -1,24 +1,21 @@
-# comments are with #
+OBJDIR := out
+OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o)
 
-# what now
-# this music is my fav btw
+out/%.o: src/%.c
+	gcc -c -Iinclude $< -o $@
 
+$(OUTOBJS): | $(OBJDIR)
 
-# what is this separator? must it be an actual tab?
-#yes?
+$(OBJDIR):
+	mkdir $(OBJDIR)
+
 clean:
-	rm -rf out/*
-
-# not scalable for now but oh well
-compile_out: clean
-	gcc -c -Iinclude src/rand.c -o out/rand
-	gcc -c -Iinclude src/pq.c -o out/pq
-	gcc -c -Iinclude src/fl.c -o out/fl
+	rm -rf out
 
 # test relies on out
-test: compile_out
-	gcc -I include/ tests/main.c out/rand out/pq out/fl -o out/test && ./out/test
+test: $(OUTOBJS)
+	gcc -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
 
-main: compile_out
-	gcc -I include/ src/main.c out/rand out/pq out/fl -o ./tiltyard && ./tiltyard
+main: $(OUTOBJS)
+	gcc -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 
