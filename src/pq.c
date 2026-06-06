@@ -16,6 +16,8 @@ PQ* pq_init(uint32_t capacity) {
     return pq;
 }
 
+// crucial note: 
+// this assumed that priority is either entire event, or top bits of event
 void pq_push(PQ* pq, uint64_t event) {
     // shoudl return status
     if (pq->current >= pq->heap[0])
