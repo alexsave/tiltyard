@@ -8,13 +8,6 @@
 #include <string.h>
 // fixed sized free list
 
-typedef struct Order {
-    uint32_t quantity;
-    uint32_t client_id;
-    uint32_t price;
-    uint32_t type;
-} Order;
-
 typedef struct BSM {
     uint32_t refs;
     uint32_t offset;
@@ -23,7 +16,7 @@ typedef struct BSM {
 
 
 // 2^16 - 1
-static const uint16_t INITIAL_METADATA_INDEX = (uint16_t)65536;
+static const uint16_t INITIAL_METADATA_INDEX = (uint16_t)65535;
 
 // this only supports 16K snapshots, which may be enough
 typedef struct BS {

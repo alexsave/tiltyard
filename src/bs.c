@@ -24,7 +24,7 @@ BS* bs_init() {
     bs->md_end = 0;
     bs->md_capacity = 1024;
 
-    bs->store_capacity = 1024;
+    bs->store_capacity = 8192;
 
     bs->store = malloc(bs->store_capacity);
     bs->metadata = malloc(bs->md_capacity * sizeof(BSM));
@@ -89,7 +89,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
         } 
 
         // put at 0
-        bs->md_start = bs->md_start + 1;
+        bs->md_start = 0;
 
         bs->metadata[bs->md_end].refs = refs;
         bs->metadata[bs->md_end].offset = 0;
@@ -113,7 +113,9 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
     
     if (first.offset > last.offset){
         // |   [last ---- last+size] [size ---- size] ... [first --- first+size]
+        printf("first offset %d, last offset %d, last size %d, size %d\n", first.offset, last.offset, last.size, size);
         if (first.offset < last.offset + last.size + size){
+            printf("doubling time\n");
 
             bs->store_capacity = bs->store_capacity << 1;
             
@@ -121,17 +123,20 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
 
             uint32_t current_start = 0;
 
-            for (uint32_t i = bs->md_start; i != last_md_index; i = (i + 1) % bs->md_capacity){
+            for (uint32_t i = bs->md_start; i != bs->md_end; i = (i + 1) % bs->md_capacity){
                 
                 // copy it to new array and update offset in the metadata
                 memcpy(&(doubled[current_start]), &(bs->store[bs->metadata[i].offset]), bs->metadata[i].size);
 
+                printf("shifting block that was at %d to %d\n", bs->metadata[i].offset, current_start);
                 bs->metadata[i].offset = current_start;
                 current_start = current_start + bs->metadata[i].size;
         
             }
 
             free(bs->store);
+
+            bs->store = doubled;
 
             // try again - check between end and capacity
             return bs_reserve(bs, size, refs, address_holder);
@@ -151,6 +156,8 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
     //} else if (first.offset <= last.offset) {
     } else {
         // | ...  [first ---- first+size] [] [][] [last --- last+size] ...   |
+
+        // this else block needs to be tested
 
         if (bs->store_capacity - (last.offset + last.size) < size) {
             if (first.offset < size) {
@@ -209,10 +216,12 @@ void* bs_get(BS* bs, uint32_t bs_number) {
     if (bs->md_start == INITIAL_METADATA_INDEX && bs->md_end == 0)
         return 0;
 
-    BSM bsm = bs->metadata[bs_number];
-    bsm.refs = bsm.refs - 1;
+    //BSM bsm = bsm.refs = bsm.refs - 1;
+    bs->metadata[bs_number].refs = bs->metadata[bs_number].refs - 1;
 
+    //printf("bs number %d, md start %d\n", bs_number, bs->md_start);
     if (bs_number == bs->md_start) {
+        printf("bs number refs %d\n", bs->metadata[bs->md_start].refs);
         while (bs->metadata[bs->md_start].refs == 0) {
             bs->md_start = (bs->md_start + 1) % bs->md_capacity;
 
@@ -228,7 +237,7 @@ void* bs_get(BS* bs, uint32_t bs_number) {
     }
 
     // i have no idea but somethign like this
-    return (void *) (bs->store + bsm.offset);
+    return (void *) (bs->store + bs->metadata[bs_number].offset);
 }
 
 
