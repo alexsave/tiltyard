@@ -15,12 +15,16 @@ void test_pq() {
 
     PQ* pq = pq_init(1024);
 
+    assert(pq_is_empty(pq) == 1);
+
     printf("\nheap: ");
     for(int i = 0; i < 6; i++) printf("%llu ", pq->heap[i]);
     printf("\ncurrent: %u \n", pq->current);
 
     // 1, 3, 4, 2
     pq_push(pq, (uint64_t)1);
+
+    assert(pq_is_empty(pq) == 0);
 
     uint64_t get = pq_peek(pq);
     assert(get == 1);

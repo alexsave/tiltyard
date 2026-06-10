@@ -8,6 +8,7 @@ typedef struct PQ {
     uint64_t* heap;
 } PQ;
 
+
 PQ* pq_init(uint32_t capacity);
 
 void pq_push(PQ* pq, uint64_t event);
@@ -15,6 +16,8 @@ void pq_push(PQ* pq, uint64_t event);
 uint64_t pq_peek(PQ* pq);
 
 uint64_t pq_pop(PQ* pq);
+
+uint8_t pq_is_empty(PQ* pq);
 
 void pq_free(PQ* pq);
 

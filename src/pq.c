@@ -113,6 +113,10 @@ uint64_t pq_pop(PQ* pq) {
     return event;
 }
 
+uint8_t pq_is_empty(PQ* pq) {
+    return pq->current == 1;
+}
+
 //ez
 void pq_free(PQ* pq) {
     free(pq->heap);
