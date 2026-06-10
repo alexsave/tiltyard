@@ -1,5 +1,5 @@
 OBJDIR := out
-OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o)
+OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o)
 
 out/%.o: src/%.c
 	gcc -c -Iinclude $< -o $@
@@ -12,10 +12,11 @@ $(OBJDIR):
 clean:
 	rm -rf out
 
+
 # test relies on out
-test: $(OUTOBJS)
+test: clean $(OUTOBJS)
 	gcc -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
 
-main: $(OUTOBJS)
+main: clean $(OUTOBJS)
 	gcc -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 
