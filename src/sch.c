@@ -12,7 +12,7 @@ SCH* sch_init(){
     sch->buckets = malloc(SCH_BUCKETS * sizeof(PQ*));
 
     for (int i = 0; i < SCH_BUCKETS; i++) {
-        sch->buckets[i] = malloc(sizeof(PQ*));
+        sch->buckets[i] = pq_init(1024);
     }
 
     return sch;
@@ -113,7 +113,9 @@ void sch_schedule_fast(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // so don't pass in anything else
     uint64_t scheduled_event = (sum << E_BITS) | (event & E_MASK);
 
+    //printf("about to push to %d\n", resulting_bucket);
     pq_push(sch->buckets[resulting_bucket], scheduled_event);
+    //printf("pushed\n");
     
     return;
 }
@@ -135,9 +137,12 @@ uint64_t sch_pop(SCH* sch) {
     // gtg now but this is the next work
 
     // slow events  must be converted to fast events when they get in range. 
+
     
+    printf("checking pq nubmer #%d\n", sch->current_bucket & BUCKET_MASK);
     // see if we can remove this check
     if(pq_is_empty(sch->buckets[sch->current_bucket&BUCKET_MASK])) {
+        printf("pq nubmer #%d is empty\n", sch->current_bucket & BUCKET_MASK);
         // advance until something scheduled
         do {
             // important note: current_bucket is actually like buckets since start
@@ -169,11 +174,10 @@ uint64_t sch_pop(SCH* sch) {
 
         // peek and pop from slow scheudler until something > truncated_s
 
-        while (1) {
+        if (!pq_is_empty(sch->slow_bucket)){
 
             uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
-
-            if (peek_ts <= truncated_s) {
+            while (peek_ts <= truncated_s) {
                 // there are some events that require special handling
                 // however i think they are best handled as a "type 0 client toggle" 
                 // but with the server id of 0 as the client id
@@ -196,12 +200,12 @@ uint64_t sch_pop(SCH* sch) {
                 uint64_t priority = seconds & P_MASK;
 
                 pq_push(
-                    sch->buckets[bucket], 
-                    (priority << E_BITS) | (pop & E_MASK));
-            } else {
-                break;
-            }
+                        sch->buckets[bucket], 
+                        (priority << E_BITS) | (pop & E_MASK));
 
+                peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
+
+            }
         }
 
         /// we're done rescheudling the slow events
@@ -210,13 +214,13 @@ uint64_t sch_pop(SCH* sch) {
         // just reschedule the slow chcker. it's once an hour so the cost is minimal
         uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
         sch_schedule_fast(sch, next, max_delta);
-        
-        
+
+
 
         //if (somethign <= truncated_s)
-            //convert from slow to fast
+        //convert from slow to fast
         //else 
-            // dont schedule it yet
+        // dont schedule it yet
 
         // if an slow event is after ns max delta, we defeinitely do not put it in fast scheduler
         // if it lines up exactly with ns max delta, ie truncated_t * billion == current time
@@ -229,10 +233,10 @@ uint64_t sch_pop(SCH* sch) {
 
 
         // don't even worry about what we just got, return the slow event
-        
+
         // probably do some bullshit like update time
         // these 7 type events need to be scheduled very carefully
-        
+
         //next = pq_pop(sch->slow_bucket);
 
         // actually this is more complex
@@ -245,7 +249,9 @@ uint64_t sch_pop(SCH* sch) {
 
     // technically nanoseconds into the bucket, possibly unneeded
     sch->now = next >> E_BITS;
-    
+
+    printf("now set to %llu, returning %llu\n", sch->now, next);
+
     // might be better to return actually next & E_MASK, but maybe some EOM or EOD events need priority
     return next;
 }
