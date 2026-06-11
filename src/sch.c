@@ -7,12 +7,12 @@ SCH* sch_init(){
 
     sch->now = 0;
     sch->current_bucket = 0;
-    sch->slow_bucket = pq_init(1024);
+    sch->slow_bucket = pq_init();
 
     sch->buckets = malloc(SCH_BUCKETS * sizeof(PQ*));
 
     for (int i = 0; i < SCH_BUCKETS; i++) {
-        sch->buckets[i] = pq_init(1024);
+        sch->buckets[i] = pq_init();
     }
 
     return sch;
@@ -139,10 +139,10 @@ uint64_t sch_pop(SCH* sch) {
     // slow events  must be converted to fast events when they get in range. 
 
     
-    printf("checking pq nubmer #%d\n", sch->current_bucket & BUCKET_MASK);
+    printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
     // see if we can remove this check
     if(pq_is_empty(sch->buckets[sch->current_bucket&BUCKET_MASK])) {
-        printf("pq nubmer #%d is empty\n", sch->current_bucket & BUCKET_MASK);
+        printf("pq nubmer #%llu is empty\n", sch->current_bucket & BUCKET_MASK);
         // advance until something scheduled
         do {
             // important note: current_bucket is actually like buckets since start
