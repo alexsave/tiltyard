@@ -8,35 +8,45 @@
 
 void test_fl() {
 
-    FL* fl = fl_init(1024);
+    FL* fl = fl_init(4);
 
-    Order order = {1, 2, 3, 4};
+    uint64_t idk = ((((1*256)+2)*256+3)*256)+4;
 
-    uint32_t order_id = fl_insert(fl, order);
+    void* ref = &idk;
 
-    Order saved_order = fl->data[order_id];
+    uint32_t id = fl_insert(fl, ref);
+    assert(id == 8191);
 
     printf("testing fl\n");
 
-    assert(saved_order.quantity == 1);
-    assert(saved_order.client_id == 2);
-    assert(saved_order.price == 3);
-    assert(saved_order.type == 4);
+    assert(fl->data[id*4 + 0] == 4);
+    assert(fl->data[id*4 + 1] == 3);
+    assert(fl->data[id*4 + 2] == 2);
+    assert(fl->data[id*4 + 3] == 1);
 
-    order.type = 5;
+    *(uint8_t*)(ref+3) = 5;
 
-    uint32_t order_id2 = fl_insert(fl, order);
+    uint32_t id2 = fl_insert(fl, ref);
+    assert(id2 == 8190);
 
-    assert(fl->data[order_id2].type == 5);
+    assert(fl->data[id2*4 +3]== 5);
 
-    fl_release(fl, order_id2);
-    fl_release(fl, order_id);
+    fl_release(fl, id2);
+    fl_release(fl, id);
 
-    uint32_t order_id3 = fl_insert(fl, order);
+    uint32_t id3 = fl_insert(fl, ref);
     
-    assert(order_id3 == 1023);
+    assert(id3 == 8191);
 
-    assert(fl->data[order_id3].type == 5);
+    assert(fl->data[id3*4 + 3] == 5);
+
+    for (int i = 0; i < 8192 - 1; i++){
+        id = fl_insert(fl, ref);
+    }
+
+    assert(fl->capacity == 8192);
+    id = fl_insert(fl, ref);
+    assert(fl->capacity == 8192*2);
 
 
     fl_free(fl);

@@ -2,26 +2,22 @@
 
 // fixed sized free list
 
-typedef struct Order {
-    uint32_t quantity;
-    uint32_t client_id;
-    uint32_t price;
-    uint32_t type;
-} Order;
-
 typedef struct FL {
     uint32_t sp;
     uint32_t* stack;
-    Order* data;
+    // technically liek "any" or void* data, but easier this way
+    uint8_t* data;
     uint32_t capacity;
+    uint8_t type_size;
 } FL;
 
+static const uint32_t FL_INITIAL_CAPACITY = 8192;
 
-FL* fl_init(uint32_t capacity);
+FL* fl_init(uint8_t type_size);
 
-uint32_t fl_insert(FL* fl, Order order);
+uint32_t fl_insert(FL* fl, void* data);
 
-void fl_release(FL* fl, uint32_t order_id);
+void fl_release(FL* fl, uint32_t id);
 
 void fl_free(FL* fl);
 
