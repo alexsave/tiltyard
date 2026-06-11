@@ -1,17 +1,20 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "pq.h"
 
 // min heap priority queue
 
-PQ* pq_init(uint32_t capacity) {
-    uint64_t* heap = malloc(capacity * sizeof(uint64_t));
+PQ* pq_init() {
+    uint64_t* heap = malloc(INITIAL_CAPACITY * sizeof(uint64_t));
 
     PQ* pq = malloc(1 * sizeof(PQ));
 
-    pq->current = 1; // possibly one for easier math later
+    pq->current = 1; // one for easier math later
     pq->heap = heap;
-    pq->heap[0] = capacity;
+    pq->heap[0] = INITIAL_CAPACITY;
 
     return pq;
 }
@@ -19,9 +22,27 @@ PQ* pq_init(uint32_t capacity) {
 // crucial note: 
 // this assumed that priority is either entire event, or top bits of event
 void pq_push(PQ* pq, uint64_t event) {
-    // shoudl return status
-    if (pq->current >= pq->heap[0])
+    // we are restricted by limits of current 
+    uint32_t max_32 = ((((uint32_t)1 << 31) - 1) << 1) + 1;
+    if (pq->current == max_32) {
+        printf("Current has hit max value, upgrade to uint64 now.\n");
         return;
+    }
+
+    // actually more like ==, i don't know how you could get >
+    if (pq->current == pq->heap[CAPACITY_INDEX]) {
+        uint64_t current_capacity = pq->heap[CAPACITY_INDEX];
+        uint64_t* doubled = malloc(2 * current_capacity * sizeof(uint64_t));
+    
+        memcpy(doubled, pq->heap, current_capacity * sizeof(uint64_t));
+
+        doubled[CAPACITY_INDEX] *= 2;
+
+        free(pq->heap);
+        pq->heap = doubled;
+    } else if (pq->current == pq->heap[CAPACITY_INDEX]) {
+        printf("Current has exceeded capacity. it shouldn't\n");
+    }
     
     uint32_t run = pq->current;
 

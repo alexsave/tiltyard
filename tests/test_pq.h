@@ -7,13 +7,15 @@
 #include "rand.h"
 #include "pq.h"
 
+
 void test_pq() {
+
     // how do we use this again?
     // TDD: test driven development
     //hmmm
     //initialize it + clear it at the end
 
-    PQ* pq = pq_init(1024);
+    PQ* pq = pq_init();
 
     assert(pq_is_empty(pq) == 1);
 
