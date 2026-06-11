@@ -29,7 +29,7 @@ typedef struct BS {
     void* store;
 } BS;
 
-BS* bs_init();
+BS* bs_init(uint16_t metadata_capacity);
 void bs_free(BS* bs);
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder);
 

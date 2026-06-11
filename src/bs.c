@@ -17,12 +17,12 @@
 
 
 
-BS* bs_init() {
+BS* bs_init(uint16_t metadata_capacity) {
     BS* bs = malloc(sizeof(BS));
 
     bs->md_start = INITIAL_METADATA_INDEX;
     bs->md_end = 0;
-    bs->md_capacity = 1024;
+    bs->md_capacity = metadata_capacity;
 
     bs->store_capacity = 8192;
 
@@ -41,31 +41,13 @@ BS* bs_init() {
 //size must be in bytes
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder){
     if (bs->md_start == bs->md_end) {
-        // need to double metadata array capacity
-
-        bs->md_start = 0;
-        // critcally, before we double
-        bs->md_end = bs->md_capacity;
-        
-        // currently md_end is out of bounds on metadata array
-
-        // new metadata array
-        BSM* doubled = malloc(2 * bs->md_capacity * sizeof(BSM));
-
-        // copy
-        // no idea if this is the right way
-        /*for (uint32_t i = 0; i < capacity; i++){
-            doubled[i] = bs->metadata[i];
-        }*/
-
-        // do we need to copy? idk
-        memcpy(doubled, bs->metadata, bs->md_capacity);
-
-        // free old one, use new one
-        free(bs->metadata);
-        bs->metadata = doubled;
-
-        bs->md_capacity = bs->md_capacity * 2;
+        printf("md start is looped back to md end, double the capacity\n");
+        // there is no clean way to double the metadata capactiy
+        // if we just ignore the current values of md_start and md_end, we lose good tracking on the store
+        // if we try to move metdata 0 -- start to a new spot, we need to maintain two copies
+        // so we just don't
+        // be sure to size capacity of your BSM properly
+        return INITIAL_METADATA_INDEX;
     }
 
 
@@ -100,6 +82,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
 
         *address_holder = &(bs->store[0]);
         //*address_holder = bs->store;???
+
         
         return 0;
     }

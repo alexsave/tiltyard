@@ -8,7 +8,7 @@
 
 void first_tests() {
     // full metadata
-    BS* bs = bs_init();
+    BS* bs = bs_init(1024);
 
     void* first_store = bs->store;
 
@@ -34,8 +34,9 @@ void first_tests() {
 }
 
 void overflow_tests() {
+    printf("overflow\n");
     // full metadata
-    BS* bs = bs_init();
+    BS* bs = bs_init(1024);
 
     void* bs_address = 0;
 
@@ -49,11 +50,15 @@ void overflow_tests() {
     assert(bs->md_start == 0);
     assert(bs->md_end == 0);
 
+    printf("start and end at 0\n");
+
     void* zero_block = bs_get(bs, 0);
     assert(zero_block == bs->store);
 
     assert(bs->md_start == 1);
     assert(bs->md_end == 0);
+
+    printf("start at 1, end at 0\n");
 
     num = bs_reserve(bs, 4, 1, &bs_address);
     printf("%d\n", num);
@@ -62,20 +67,22 @@ void overflow_tests() {
     assert(bs->md_start == 1);
     assert(bs->md_end == 1);
 
+    // we don't double md anymore
     num = bs_reserve(bs, 4, 1, &bs_address);
-    assert(num == 1024);
-    assert(bs->md_start == 0);
-    assert(bs->md_end == 1025);
-    assert(bs->md_capacity == 2048);
+    assert(num == INITIAL_METADATA_INDEX);
+    assert(bs->md_start == 1);
+    assert(bs->md_end == 1);
+    assert(bs->md_capacity == 1024);
     // store did not get reallocated
     assert(bs->store == zero_block);
     assert(bs->store_capacity == 8192);
 
     bs_free(bs);
+    printf("overflow done\n");
 }
 
 void last_before_first_tests() {
-    BS* bs = bs_init();
+    BS* bs = bs_init(1024);
 
     void* first_store = bs->store;
     
@@ -128,7 +135,7 @@ void last_before_first_tests() {
 
 void last_after_first_tests(){
     //gonna copy a bit from the other test
-    BS* bs = bs_init();
+    BS* bs = bs_init(1024);
 
     void* first_store = bs->store;
     
@@ -259,7 +266,7 @@ void test_bs() {
 
     /*printf("testing blobstore\n");
 
-    BS* bs = bs_init();
+    BS* bs = bs_init(1024);
 
     // ...
 
