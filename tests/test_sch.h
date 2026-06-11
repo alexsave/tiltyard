@@ -9,16 +9,29 @@
 #include "pq.h"
 #include "sch.h"
 
+void log_full(uint64_t raw) {
+    printf("raw: %llu, priority: %llu, type: %llu, params: %llu\n", 
+        raw, 
+        raw >> E_BITS, 
+        (raw >> (E_BITS-T_BITS)) & T_MASK, 
+        raw & PARAM_MASK);
+}
+
 void test_sch() {
 
     SCH* sch = sch_init();
 
     uint64_t event = 7 << (E_BITS - T_BITS) | 1000;
 
-    sch_schedule_fast(sch, event, 100);
+    sch_schedule(sch, event, 100);
 
-    uint64_t scheduled = sch_pop(sch);
-    printf("%llu\n", scheduled);
+    uint64_t next = sch_pop(sch);
+    
+    log_full(next);
+
+    next = sch_pop(sch);
+    log_full(next);
+
     //magic
     sch_free(sch);
 }

@@ -49,7 +49,8 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
 
 // we'll just have to toss some 
 // idk about the types, cant even focus form thsi noise
-void sch_schedule_fast(SCH* sch, uint64_t event, uint64_t delta_ns) {
+void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
+    printf("schedule invoked\n");
     
     // when we actully do scheduling, it's more like that we pass in DELTA, not "realtime"
     // so how many ns in teh future this happens
@@ -71,6 +72,7 @@ void sch_schedule_fast(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // if it's one over, it's not the case
 
     if (delta_ns > max_delta) {
+        printf("delta too high");
         // first off, delta_ns is pretty big already
         // lose some resolution and switch to slow scheduler
         
@@ -88,6 +90,10 @@ void sch_schedule_fast(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // maybe we need to scale, not sure how best to store "curent_ns"
     // but it's whatever the last popped event is
     uint64_t sum = sch->now + delta_ns;
+
+    printf("sum is %llu\n", sum);
+    printf("shifted sum is %llu\n", sum << E_BITS);
+    //printf("some value is %llu\n", (uint64_t)7 * (1 << 39));
     
     // and then we do something like 
 
@@ -113,9 +119,11 @@ void sch_schedule_fast(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // so don't pass in anything else
     uint64_t scheduled_event = (sum << E_BITS) | (event & E_MASK);
 
-    //printf("about to push to %d\n", resulting_bucket);
+
+
+    printf("about to push event %llu to %d\n", scheduled_event, resulting_bucket);
     pq_push(sch->buckets[resulting_bucket], scheduled_event);
-    //printf("pushed\n");
+    printf("pushed\n");
     
     return;
 }
@@ -142,9 +150,9 @@ uint64_t sch_pop(SCH* sch) {
     printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
     // see if we can remove this check
     if(pq_is_empty(sch->buckets[sch->current_bucket&BUCKET_MASK])) {
-        printf("pq nubmer #%llu is empty\n", sch->current_bucket & BUCKET_MASK);
         // advance until something scheduled
         do {
+            printf("pq nubmer #%llu is empty\n", sch->current_bucket & BUCKET_MASK);
             // important note: current_bucket is actually like buckets since start
             // need to do &7 to get current bucket index, 
             // or >>3 to get number of cycles through all buckets
@@ -155,6 +163,10 @@ uint64_t sch_pop(SCH* sch) {
 
     uint64_t next = pq_pop(sch->buckets[sch->current_bucket & BUCKET_MASK]);
 
+    printf("raw pop %llu\n", next);
+    
+    sch->now = next >> E_BITS;
+    printf("now set to %llu, returning %llu\n", sch->now, next);
     
 
     // i"m going to decide right now that the top 3 bits of the "event" are the event type
@@ -213,7 +225,8 @@ uint64_t sch_pop(SCH* sch) {
 
         // just reschedule the slow chcker. it's once an hour so the cost is minimal
         uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
-        sch_schedule_fast(sch, next, max_delta);
+        printf("next %llu and max d %llu\n", next, max_delta);
+        sch_schedule(sch, next, max_delta);
 
 
 
@@ -248,9 +261,8 @@ uint64_t sch_pop(SCH* sch) {
     }
 
     // technically nanoseconds into the bucket, possibly unneeded
-    sch->now = next >> E_BITS;
-
-    printf("now set to %llu, returning %llu\n", sch->now, next);
+    //sch->now = next >> E_BITS;
+    //printf("now set to %llu, returning %llu\n", sch->now, next);
 
     // might be better to return actually next & E_MASK, but maybe some EOM or EOD events need priority
     return next;
