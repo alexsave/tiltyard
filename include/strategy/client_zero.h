@@ -10,6 +10,8 @@ typedef struct CZ {
 CZ* cz_init();
 
 uint64_t cz_initial_boot_time(CZ* cz);
+uint64_t cz_postboot_socket(CZ* cz);
+uint64_t cz_base_latency(CZ* cz);
 
 void cz_free(CZ* cz);
 
