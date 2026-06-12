@@ -26,6 +26,7 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
     uint64_t max_ns = ((((uint64_t)1 << 63) - 1) << 1) + 1;
     uint64_t now_ns = sch_now_ns(sch);
 
+
     // have to do minus, if delta is large, delta + now will overflow
     if (max_ns - now_ns < delta_ns) {
         // out of time bud
@@ -35,6 +36,8 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
 
     uint64_t absolute_ns = now_ns + delta_ns;
     uint64_t absolute_s = absolute_ns / S_TO_NS;
+
+    printf("maxns %llu, now_ns %llu, absolute_ns %llu, absolute_s %llu\n", max_ns, now_ns, absolute_ns, absolute_s);
 
     // EZ
     uint64_t scheduled_event = (absolute_s << E_BITS) | (event & E_MASK);
@@ -68,11 +71,13 @@ void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // this shoudl be hardcoded but
     uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
 
+    printf("%llu max vs %llu delta\n", max_delta, delta_ns);
+
     // if it's equal, we MUST be in the privious bucket
     // if it's one over, it's not the case
 
     if (delta_ns > max_delta) {
-        printf("delta too high");
+        printf("delta too high\n");
         // first off, delta_ns is pretty big already
         // lose some resolution and switch to slow scheduler
         
@@ -178,18 +183,38 @@ uint64_t sch_pop(SCH* sch) {
         // and potentially push slow events into the fast scheduler
 
         //[   cycles    22?    ][B][                PRIORITY              ]
-        uint64_t current_time = sch->current_bucket * P_SPAN + (next >> E_BITS);
+        uint64_t current_time = (sch->current_bucket << P_BITS) + (next >> E_BITS);
 
-        
         //time in seconds, always a bit lower than theoretical ns max delta
-        uint64_t truncated_s = current_time/1000000000;
 
-        // peek and pop from slow scheudler until something > truncated_s
+        // ohhhh right. but i thought we handled this. 
+        // if an event is between "now" and "now + max_delta, we reschedule
+        uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
+
+        uint64_t latest_threshold = (current_time + max_delta)/S_TO_NS;
+
 
         if (!pq_is_empty(sch->slow_bucket)){
 
-            uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
-            while (peek_ts <= truncated_s) {
+            // the priority queue doesn't actually clear itself when we pop, it just stops tracking
+            // thus the last event in the pqueue (the one slow event) never clears
+            // is this a fault of peek?
+            //lets check
+            //uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
+            // both these conditions must hold. although a bit faster to do this...
+              
+            while (!pq_is_empty(sch->slow_bucket)) {
+                uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
+
+
+                if (peek_ts > latest_threshold)
+                    break;
+                // if it's equal its ok to continue because latest_threshold is truncated
+
+                printf("need to reschedule event, with absolute s %llu\n", peek_ts);
+
+
+                //yup - but why
                 // there are some events that require special handling
                 // however i think they are best handled as a "type 0 client toggle" 
                 // but with the server id of 0 as the client id
@@ -224,18 +249,11 @@ uint64_t sch_pop(SCH* sch) {
 
 
         // just reschedule the slow chcker. it's once an hour so the cost is minimal
-        uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
         printf("next %llu and max d %llu\n", next, max_delta);
         sch_schedule(sch, next, max_delta);
 
 
 
-        //if (somethign <= truncated_s)
-        //convert from slow to fast
-        //else 
-        // dont schedule it yet
-
-        // if an slow event is after ns max delta, we defeinitely do not put it in fast scheduler
         // if it lines up exactly with ns max delta, ie truncated_t * billion == current time
         // this is weird and relies on slow check == 7, but it will work
         // because we then schedule two events at the exact time, but the order doesn't actaully matter because slow checker won't actually modify market state

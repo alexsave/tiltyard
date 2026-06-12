@@ -63,7 +63,14 @@ void pq_push(PQ* pq, uint64_t event) {
 }
 
 // ez one
+// undefined behavior if empty, ie pq->current == 1
 uint64_t pq_peek(PQ* pq){
+    // should we return zero?
+    // genuinely don't know what the fastest option is
+    // maybe pq should handle it, maybe the callers should (keepign this function lightweight)
+    // or we could put 0 in the 1 index when we're empty
+    // but that could also be confused with a event of type 0 "client toggle", params 0, priority 0
+    // calling is empty is the best move
     return pq->heap[1];
 }
 
