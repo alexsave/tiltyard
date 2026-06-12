@@ -43,7 +43,8 @@ static const uint8_t SLOW_CHECK_TYPE = 7;
 static const uint8_t T_BITS = 3;
 static const uint8_t T_MASK = (1 << T_BITS) - 1;
 
-static const uint32_t PARAM_MASK = (1 << (FULL_SIZE_BITS - P_BITS - T_BITS)) - 1;
+static const uint32_t PARAM_BITS = FULL_SIZE_BITS - P_BITS - T_BITS;
+static const uint32_t PARAM_MASK = (1 << PARAM_BITS) - 1;
 
 SCH* sch_init();
 

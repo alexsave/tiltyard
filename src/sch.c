@@ -37,7 +37,7 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
     uint64_t absolute_ns = now_ns + delta_ns;
     uint64_t absolute_s = absolute_ns / S_TO_NS;
 
-    printf("maxns %llu, now_ns %llu, absolute_ns %llu, absolute_s %llu\n", max_ns, now_ns, absolute_ns, absolute_s);
+    //printf("maxns %llu, now_ns %llu, absolute_ns %llu, absolute_s %llu\n", max_ns, now_ns, absolute_ns, absolute_s);
 
     // EZ
     uint64_t scheduled_event = (absolute_s << E_BITS) | (event & E_MASK);
@@ -53,7 +53,7 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
 // we'll just have to toss some 
 // idk about the types, cant even focus form thsi noise
 void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
-    printf("schedule invoked\n");
+    //printf("schedule invoked\n");
     
     // when we actully do scheduling, it's more like that we pass in DELTA, not "realtime"
     // so how many ns in teh future this happens
@@ -71,13 +71,13 @@ void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // this shoudl be hardcoded but
     uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
 
-    printf("%llu max vs %llu delta\n", max_delta, delta_ns);
+    //printf("%llu max vs %llu delta\n", max_delta, delta_ns);
 
     // if it's equal, we MUST be in the privious bucket
     // if it's one over, it's not the case
 
     if (delta_ns > max_delta) {
-        printf("delta too high\n");
+        //printf("delta too high\n");
         // first off, delta_ns is pretty big already
         // lose some resolution and switch to slow scheduler
         
@@ -96,8 +96,8 @@ void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // but it's whatever the last popped event is
     uint64_t sum = sch->now + delta_ns;
 
-    printf("sum is %llu\n", sum);
-    printf("shifted sum is %llu\n", sum << E_BITS);
+    //printf("sum is %llu\n", sum);
+    //printf("shifted sum is %llu\n", sum << E_BITS);
     //printf("some value is %llu\n", (uint64_t)7 * (1 << 39));
     
     // and then we do something like 
@@ -126,9 +126,9 @@ void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
 
 
 
-    printf("about to push event %llu to %d\n", scheduled_event, resulting_bucket);
+    //printf("about to push event %llu to %d\n", scheduled_event, resulting_bucket);
     pq_push(sch->buckets[resulting_bucket], scheduled_event);
-    printf("pushed\n");
+    //printf("pushed\n");
     
     return;
 }
@@ -152,12 +152,12 @@ uint64_t sch_pop(SCH* sch) {
     // slow events  must be converted to fast events when they get in range. 
 
     
-    printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
+    //printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
     // see if we can remove this check
     if(pq_is_empty(sch->buckets[sch->current_bucket&BUCKET_MASK])) {
         // advance until something scheduled
         do {
-            printf("pq nubmer #%llu is empty\n", sch->current_bucket & BUCKET_MASK);
+            //printf("pq nubmer #%llu is empty\n", sch->current_bucket & BUCKET_MASK);
             // important note: current_bucket is actually like buckets since start
             // need to do &7 to get current bucket index, 
             // or >>3 to get number of cycles through all buckets
@@ -168,10 +168,10 @@ uint64_t sch_pop(SCH* sch) {
 
     uint64_t next = pq_pop(sch->buckets[sch->current_bucket & BUCKET_MASK]);
 
-    printf("raw pop %llu\n", next);
+    //printf("raw pop %llu\n", next);
     
     sch->now = next >> E_BITS;
-    printf("now set to %llu, returning %llu\n", sch->now, next);
+    //printf("now set to %llu, returning %llu\n", sch->now, next);
     
 
     // i"m going to decide right now that the top 3 bits of the "event" are the event type
@@ -211,7 +211,7 @@ uint64_t sch_pop(SCH* sch) {
                     break;
                 // if it's equal its ok to continue because latest_threshold is truncated
 
-                printf("need to reschedule event, with absolute s %llu\n", peek_ts);
+                //printf("need to reschedule event, with absolute s %llu\n", peek_ts);
 
 
                 //yup - but why
@@ -249,7 +249,7 @@ uint64_t sch_pop(SCH* sch) {
 
 
         // just reschedule the slow chcker. it's once an hour so the cost is minimal
-        printf("next %llu and max d %llu\n", next, max_delta);
+        //printf("next %llu and max d %llu\n", next, max_delta);
         sch_schedule(sch, next, max_delta);
 
 

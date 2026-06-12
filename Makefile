@@ -1,7 +1,10 @@
 OBJDIR := out
-OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o)
+OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o client_zero.o)
 
 out/%.o: src/%.c
+	gcc -c -Iinclude $< -o $@
+
+out/%.o: src/strategy/%.c
 	gcc -c -Iinclude $< -o $@
 
 $(OUTOBJS): | $(OBJDIR)
