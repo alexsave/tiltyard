@@ -17,7 +17,7 @@ FL* fl_init(uint8_t type_size);
 
 uint32_t fl_insert(FL* fl, void* data);
 
-void fl_release(FL* fl, uint32_t id);
+void* fl_release(FL* fl, uint32_t id);
 
 void fl_free(FL* fl);
 

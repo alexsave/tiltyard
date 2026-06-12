@@ -69,13 +69,20 @@ uint32_t fl_insert(FL* fl, void* data) {
     return id;
 }
 
-void fl_release(FL* fl, uint32_t id) {
+void* fl_release(FL* fl, uint32_t id) {
     // shouldn't happen but prevents extra releases
-    if (fl->sp == fl->capacity)
-        return;
+    if (fl->sp == fl->capacity) {
+        printf("This shouldn't happen, investigate why %u was released again.\n", id);
+        // null ptr is fine
+        return 0;
+    }
 
+    // pop the id back into the stack of available ids
     fl->stack[fl->sp] = id;
     fl->sp = fl->sp + 1;
+
+    //maybe?
+    return fl->data + id*fl->type_size;
 }
 
 void fl_free(FL* fl) {
