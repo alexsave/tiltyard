@@ -5,6 +5,7 @@
 #include "sch.h"
 #include "fl.h"
 #include "strategy/client_zero.h"
+#include "types.h"
 
 void log_full(uint64_t raw) {
     printf("raw: %llu, priority %llu, type %llu, params %llu\n", 
@@ -89,6 +90,107 @@ int main(int argc, char* argv[]){
         uint64_t params = next & PARAM_MASK;
 
         uint32_t start_server_exec = 2;
+
+        // different from waht is below
+        if (type == SERVER_TYPE) {
+            // something in the server
+            u64 packet_id = params;
+
+            // the ordering of these actually matters for tie breakers
+            u32 HW_TO_SW_ID = 0;
+            u32 EXEC_START_ID = 1;
+            u32 EXEC_END_ID = 2;
+            u32 EXEC_TO_SW_ID = 3;
+            u32 MAX_RESERVED_ID = EXEC_TO_SW_ID;
+
+            // packet arrives to server
+            if (packet_id > MAX_RESERVED_ID) {
+                cb_queue(hw_queue, packet_id);
+
+                u64 HW_TO_SW_DELAY = 10000;
+                u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (SW_TO_EXEC_ID & PARAM_MASK);
+                sch_schedule(sch, event, HW_TO_SW_DELAY);
+            } else if (packet_id == HW_TO_SW_ID) {
+                if (cb_is_empty(hw_queue)) {
+                    //weird
+                    continue;
+                }
+                u32 moving_packet = cb_deque(hw_queue); // handle zero case
+
+                if (!cb_is_empty(sw_queue)) {
+                    u64 SW_TO_EXEC_DELAY = 100;
+                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
+                    sch_schedule(sch, event, SW_TO_EXEC_DELAY);
+                }
+
+                cb_queue(sw_queue, moving_packet);
+                
+                
+            } else if (packet_id == EXEC_START_ID) {
+                // we are mid loop
+                if (server->executing == 1) {
+                    continue;
+                }
+
+                if (cb_is_empty(sw_queue)) {
+                    //really weird
+                    continue;
+                }
+
+                server->executing = 1;
+
+                u64 EXEC_TIME = 10;
+                u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
+                sch_schedule(sch, event, EXEC_TIME);
+            } else if (packet_id == EXEC_END_ID) {
+                if (cb_is_empty(sw_queue)) {
+                    //really weird
+                    continue;
+                }
+
+                u32 exec_packet_id = cb_deque(sw_queue);
+
+                // TODO actually modify the order book based on packets[exec_packet_id]
+                
+                // also schedule a bunch of CLIENT_IN events
+
+
+                /*
+                if (need to convert stops)
+                    sw_convertholder->queue(converted packet ids)
+                     schedule EXEC_TO_SW_ID eevent
+                */
+    
+                if (cb_is_empty(sw_queue)){
+                    server->executing = 0;
+                } else {
+                    u64 EXEC_TIME = 10;
+                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
+                    sch_schedule(sch, event, EXEC_TIME);
+                }
+
+                
+                
+                
+            } else if (packet_id == EXEC_TO_SW_ID) {
+                /*
+                while(packet != sentinel){
+                    packet = covnert_holder.dqueue
+                    sw_queue.push(packet)
+                }
+                if (!cb_is_empty(sw_queue)) {
+                    u64 SW_TO_EXEC_DELAY = 100;
+                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
+                    sch_schedule(sch, event, SW_TO_EXEC_DELAY);
+    
+                */
+            }
+
+        } else if (type == CLIENT_IN_TYPE) {
+        } else if (type == CLIENT_OUT_TYPE) {
+        } else if (type == SLOW_CHECK_TYPE) {
+        } 
+
 
         // i dont like switches lol
         if (type == BOOT_TYPE) {
