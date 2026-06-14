@@ -24,6 +24,7 @@ typedef struct CB {
 CB* cb_init();
 void cb_queue(CB* cb, u32 value);
 u32 cb_deque(CB* cb);
+u8 cb_is_empty(CB* cb);
 void cb_free(CB* cb);
 
 #endif

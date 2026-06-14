@@ -56,7 +56,16 @@ u32 cb_deque(CB* cb) {
     u32 result = cb->buffer[cb->start];
     cb->start = (cb->start + 1) % cb->capacity;
 
+    if (cb->start == cb->end) {
+        // there's gotta be an easier way than this
+        cb->start == INITIAL_START_INDEX;
+    }
+
     return result;
+}
+
+u8 cb_is_empty(CB* cb) {
+    return cb->start == INITIAL_START_INDEX;
 }
 
 void cb_free(CB* cb) {
