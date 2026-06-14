@@ -8,13 +8,15 @@
 // fixed sized free list
 
 
-FL* fl_init(uint8_t type_size) {
+// with some compression, these could be a single char
+// reserved_id - lowest N value can never be assigned
+FL* fl_init(uint8_t type_size, uint8_t reserved_ids) {
     FL* fl = malloc(1*sizeof(FL));
 
-    uint8_t * data = malloc(FL_INITIAL_CAPACITY * type_size);
+    uint8_t* data = malloc(FL_INITIAL_CAPACITY * type_size);
     uint32_t* stack = malloc(FL_INITIAL_CAPACITY * sizeof(uint32_t));
 
-    for (uint32_t i = 0; i < FL_INITIAL_CAPACITY; i++) {
+    for (uint32_t i = reserved_ids; i < FL_INITIAL_CAPACITY; i++) {
         stack[i] = i;
     }
 
@@ -23,6 +25,7 @@ FL* fl_init(uint8_t type_size) {
     fl->sp = FL_INITIAL_CAPACITY;
     fl->capacity = FL_INITIAL_CAPACITY;
     fl->type_size = type_size;
+    fl->reserved_ids = reserved_ids;
 
     return fl;
 }
@@ -30,8 +33,8 @@ FL* fl_init(uint8_t type_size) {
 // you can just put whatever in here
 uint32_t fl_insert(FL* fl, void* data) {
 
-    if (fl->sp == 0) {
-        // quick check
+    if (fl->sp == fl->reserved_ids) {
+        // quick check (does not fit in 32 bits anymore)
         if ((fl->capacity << 1) == 0) {
             printf("completely out of capacity. rearchitect freelist\n");
             // return some bogus
@@ -39,7 +42,7 @@ uint32_t fl_insert(FL* fl, void* data) {
         }
 
         uint32_t* doubled_stack = malloc(2 * fl->capacity * sizeof(uint32_t));
-        for (uint32_t i = 0; i < fl->capacity; i++) {
+        for (uint32_t i = fl->reserved_ids; i < fl->capacity; i++) {
             // can't do mem copy because this genuinely new data, new indicies
             doubled_stack[i] = i + fl->capacity;
         }
@@ -71,7 +74,7 @@ uint32_t fl_insert(FL* fl, void* data) {
 
 void* fl_release(FL* fl, uint32_t id) {
     // shouldn't happen but prevents extra releases
-    if (fl->sp == fl->capacity) {
+    if (fl->sp == fl->capacity || id < fl->reserved_ids) {
         printf("This shouldn't happen, investigate why %u was released again.\n", id);
         // null ptr is fine
         return 0;

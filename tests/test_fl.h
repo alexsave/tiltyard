@@ -8,7 +8,7 @@
 
 void test_fl() {
 
-    FL* fl = fl_init(4);
+    FL* fl = fl_init(4,0);
 
     uint64_t idk = ((((1*256)+2)*256+3)*256)+4;
 

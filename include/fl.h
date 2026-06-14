@@ -8,12 +8,14 @@ typedef struct FL {
     // technically liek "any" or void* data, but easier this way
     uint8_t* data;
     uint32_t capacity;
+    // combine these???
     uint8_t type_size;
+    uint8_t reserved_ids;
 } FL;
 
 static const uint32_t FL_INITIAL_CAPACITY = 8192;
 
-FL* fl_init(uint8_t type_size);
+FL* fl_init(uint8_t type_size, uint8_t reserved_ids);
 
 uint32_t fl_insert(FL* fl, void* data);
 
