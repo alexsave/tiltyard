@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include "sch.h"
 #include "pq.h"
+#include "constants.h"
 
 SCH* sch_init(){
     SCH* sch = malloc(sizeof(SCH));
@@ -162,6 +163,7 @@ uint64_t sch_pop(SCH* sch) {
             // need to do &7 to get current bucket index, 
             // or >>3 to get number of cycles through all buckets
             sch->current_bucket++;
+            printf("incrememting bucket\n");
         } while(pq_is_empty(sch->buckets[sch->current_bucket & BUCKET_MASK]));
         
     }
@@ -176,7 +178,7 @@ uint64_t sch_pop(SCH* sch) {
 
     // i"m going to decide right now that the top 3 bits of the "event" are the event type
     // and that 111 is the "slow check" event type
-    if (((next >> (E_BITS - T_BITS)) & ((1 << T_BITS) -1)) == 7) {
+    if (((next >> (E_BITS - T_BITS)) & ((1 << T_BITS) -1)) == SLOW_REPEAT_TYPE) {
 
 
         // this needs to take the current time, turn it into seconds, 
@@ -204,6 +206,7 @@ uint64_t sch_pop(SCH* sch) {
             // both these conditions must hold. although a bit faster to do this...
               
             while (!pq_is_empty(sch->slow_bucket)) {
+                //printf("slow bucket not empty\n");
                 uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
 
 

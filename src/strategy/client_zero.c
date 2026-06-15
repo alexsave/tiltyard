@@ -17,7 +17,7 @@ uint64_t cz_postboot_socket(CZ* cz) {
 }
 
 uint64_t cz_base_latency(CZ* cz) {
-    return 300000000;// 300 ms?
+    return (uint64_t)300000000;// 300 ms?
 }
 
 
