@@ -58,7 +58,7 @@ u32 cb_deque(CB* cb) {
 
     if (cb->start == cb->end) {
         // there's gotta be an easier way than this
-        cb->start == INITIAL_START_INDEX;
+        cb->start = INITIAL_START_INDEX;
     }
 
     return result;
