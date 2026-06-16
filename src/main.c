@@ -34,6 +34,9 @@ static const u32 EXEC_END_ID = 2;
 static const u32 EXEC_TO_SW_ID = 3;
 static const u32 MAX_RESERVED_ID = EXEC_TO_SW_ID;
 
+// this only works because HW_TO_SW_ID = 0 and is reserved
+static const u32 CONVERT_SENTINEL_VALUE = 0;
+
 // subtypes for server in types
 
 
@@ -77,6 +80,9 @@ int main(int argc, char* argv[]){
 
     CB* sw_queue = cb_init();
     CB* hw_queue = cb_init();
+    // when we have stop orders that are hit and convert to market orders
+    // we cannot put them immediately into the sw queue
+    CB* convert_holder = cb_init();
 
 
     SCH* sch = sch_init(rand);
@@ -204,8 +210,13 @@ int main(int argc, char* argv[]){
 
                 /*
                    if (need to convert stops)
-                   sw_convertholder->queue(converted packet ids)
                    schedule EXEC_TO_SW_ID eevent
+                    u64 SW_TO_EXEC_DELAY = 100;
+                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_TO_SW_ID & PARAM_MASK);
+                    sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
+                   cb_queue(convert_holder);
+                   cb_queue(CONVERT_SENTINEL_VALUE);
+                
                  */
 
                 if (cb_is_empty(sw_queue)){
@@ -220,19 +231,24 @@ int main(int argc, char* argv[]){
 
 
             } else if (packet_id == EXEC_TO_SW_ID) {
-                /*
-                   while(packet != sentinel){
-                   packet = covnert_holder.dqueue
-                   sw_queue.push(packet)
-                   }
-                   if (!cb_is_empty(sw_queue)) {
+                u32 synth_packet_id = cb_deque(convert_holder);
+
+                if (cb_is_empty(convert_holder) || synth_packet_id == CONVERT_SENTINEL_VALUE) {
+                    continue;
+                }
+
+                if (cb_is_empty(sw_queue)) {
                    u64 SW_TO_EXEC_DELAY = 100;
                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
-                   sch_schedule(sch, event, SW_TO_EXEC_DELAY);
+                   sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
+                }
 
-                   }
+                // this will pop the last CONVERT_SENTINEL_VALUE becuase we deque before we check
+                while(!cb_is_empty(convert_holder) && synth_packet_id != CONVERT_SENTINEL_VALUE) {
+                    cb_queue(sw_queue, synth_packet_id);
+                    synth_packet_id = cb_deque(convert_holder);
+                }       
 
-                 */
             }
         } else if (type == CLIENT_IN_TYPE) {
             printf("client in type\n");
