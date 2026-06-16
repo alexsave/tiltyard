@@ -60,8 +60,8 @@ typedef struct Packet {
 
 // these two are for clients
 // and they do limit us to only 2^30 snapshots but maybe that's ok
-static const u8 SNAPSHOT_BOOT_BIT = sizeof(u32) - 1;
-static const u8 SNAPSHOT_SOCKET_BIT = sizeof(u32) - 2;
+static const u8 SNAPSHOT_BOOT_BIT = 31;
+static const u8 SNAPSHOT_SOCKET_BIT = 30;
 
 //|= 1 << SNAPSHOT_BOOT_BIT;
 
