@@ -36,18 +36,6 @@ static const u32 MAX_RESERVED_ID = EXEC_TO_SW_ID;
 
 // subtypes for server in types
 
-//static u64 SERVER_EXEC_TYPE = 
-/*
-   Packet p = { .type = type, .client_id = params};
-   uint32_t packet_id = fl_insert(packets, &p);
-// this calculation will be used for network latency in a few places
-uint64_t base_jitter = cz_base_latency(client);
-uint64_t bottom = ((uint64_t)1 << 32) - 1;
-uint64_t random_jitter = 
-(base_jitter) + // 1.0x
-(base_jitter >> 7) + // + ~.01x
-(((base_jitter * (*rand & bottom)) >> 32 ) >> 5); // + 0x~.03x
- */
 
 // ok so this is going to have a BUNCH of stuff in it, everything we need to specify an order
 // really these are client->server network events, but wel
@@ -61,7 +49,8 @@ typedef struct Packet {
 // these two are for clients
 // and they do limit us to only 2^30 snapshots but maybe that's ok
 static const u8 SNAPSHOT_BOOT_BIT = 31;
-static const u8 SNAPSHOT_SOCKET_BIT = 30;
+
+static const u8 SNAPSHOT_SOCKET_BIT = 7;
 
 //|= 1 << SNAPSHOT_BOOT_BIT;
 
@@ -73,6 +62,7 @@ typedef struct Response {
 
     u32 snapshot_id;// also boot or socket
 } Response;
+
 
 int main(int argc, char* argv[]){
 
@@ -93,10 +83,10 @@ int main(int argc, char* argv[]){
 
     // Initialization
 
-    uint64_t event = SLOW_REPEAT_TYPE << (PARAM_BITS) | 0;
+    uint64_t repeat_event = SLOW_REPEAT_TYPE << (PARAM_BITS) | 0;
     // is 0 safe to schedule into?
     // maybe
-    sch_schedule(sch, event, 0);
+    sch_schedule(sch, repeat_event, 0);
 
 
     // no reservations
@@ -145,7 +135,7 @@ int main(int argc, char* argv[]){
 
         uint32_t start_server_exec = 2;
 
-        
+
         // different from waht is below
         if (type == SERVER_TYPE) {
             // something in the server
@@ -159,7 +149,7 @@ int main(int argc, char* argv[]){
 
                 u64 HW_TO_SW_DELAY = 10000;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (HW_TO_SW_ID & PARAM_MASK);
-                sch_schedule(sch, event, HW_TO_SW_DELAY);
+                sch_schedule(sch, socket_event, HW_TO_SW_DELAY);
             } else if (packet_id == HW_TO_SW_ID) {
                 if (cb_is_empty(hw_queue)) {
                     //weird
@@ -171,7 +161,7 @@ int main(int argc, char* argv[]){
                 if (cb_is_empty(sw_queue)) {
                     u64 SW_TO_EXEC_DELAY = 100;
                     u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
-                    sch_schedule(sch, event, SW_TO_EXEC_DELAY);
+                    sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
                 }
 
                 cb_queue(sw_queue, moving_packet);
@@ -195,7 +185,7 @@ int main(int argc, char* argv[]){
 
                 u64 EXEC_TIME = 10;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
-                sch_schedule(sch, event, EXEC_TIME);
+                sch_schedule(sch, socket_event, EXEC_TIME);
             } else if (packet_id == EXEC_END_ID) {
                 if (cb_is_empty(sw_queue)) {
                     //really weird
@@ -223,7 +213,7 @@ int main(int argc, char* argv[]){
                 } else {
                     u64 EXEC_TIME = 10;
                     u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
-                    sch_schedule(sch, event, EXEC_TIME);
+                    sch_schedule(sch, socket_event, EXEC_TIME);
                 }
 
 
@@ -240,32 +230,92 @@ int main(int argc, char* argv[]){
                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
                    sch_schedule(sch, event, SW_TO_EXEC_DELAY);
 
+                   }
+
                  */
             }
+        } else if (type == CLIENT_IN_TYPE) {
+            printf("client in type\n");
 
-            } else if (type == CLIENT_IN_TYPE) {
-                printf("client in type\n");
-            } else if (type == CLIENT_OUT_TYPE) {
-                printf("client out type\n");
-            } else if (type == SLOW_REPEAT_TYPE) {
-                printf("slow repeat type\n");
-            } 
+            //print
+
+            // client actually needs to read the response
+            // params provides response id
+            u32 response_id = params;
+
+            Response response = *(Response*)fl_release(responses, response_id);
+            
+            u32 client_id = response.client_id;
+            u32 snapshot_id = response.snapshot_id;
+
+            // special checks for snapshot id
 
 
-            //boot has been removed. there is no difference between a computer that is off and a computer that is disconnected from the socket in this sim
+            if (snapshot_id & (1 << SNAPSHOT_BOOT_BIT)) {
+                printf("boot event\n");
+
+                // for now, le't sjust say we wena tto connect to the websocket
+
+                u64 delay = cz_postboot_socket(0);
+
+                printf("%llu\n", delay);
+
+                Packet p = {.type = 1 << SNAPSHOT_SOCKET_BIT, .client_id = client_id};
+
+                u32 packet_id = fl_insert(packets,&p);
+                printf("packet id, %u\n", packet_id);
+
+                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
+
+                //printf("delay %llu, event %llu\n", event, delay);
+
+                sch_schedule(sch, socket_event, delay);
+                continue;
+            }
+
+            // otherwise we actually look at the snapshot and do stuff with it
+            
+
+
+        } else if (type == CLIENT_OUT_TYPE) {
+
+            u32 packet_id = params;
+            Packet packet = *(Packet*)fl_get(packets, packet_id);
+
+            // roughtly along these lines, need better solution
+
+            u64 base_jitter = cz_base_latency(0);
+            u64 random_jitter = 
+                (base_jitter) + // 1.0x
+                (base_jitter >> 7) + // + ~.01x
+                (((base_jitter * (*rand & MAX_U32)) >> 32 ) >> 5); // + 0x~.03x
 
 
 
-        }
+            printf("client out type\n");
+
+            u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
+
+            sch_schedule(sch, out_event, random_jitter);
+        } else if (type == SLOW_REPEAT_TYPE) {
+            printf("slow repeat type\n");
+        } 
 
 
-        sch_free(sch);
-        cz_free(client);
-        rand_free(rand);
-        free(server);
+        //boot has been removed. there is no difference between a computer that is off and a computer that is disconnected from the socket in this sim
 
-        cb_free(hw_queue);
-        cb_free(sw_queue);
 
-        return 0;
+
     }
+
+
+    sch_free(sch);
+    cz_free(client);
+    rand_free(rand);
+    free(server);
+
+    cb_free(hw_queue);
+    cb_free(sw_queue);
+
+    return 0;
+}

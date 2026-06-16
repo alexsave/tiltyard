@@ -22,6 +22,7 @@ uint64_t cz_base_latency(CZ* cz) {
 
 
 
+
 void cz_free(CZ* cz) {
     free(cz);
 }
