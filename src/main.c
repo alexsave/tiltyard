@@ -89,7 +89,7 @@ int main(int argc, char* argv[]){
     CB* hw_queue = cb_init();
 
 
-    SCH* sch = sch_init();
+    SCH* sch = sch_init(rand);
 
     // Initialization
 

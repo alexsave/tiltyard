@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include "types.h"
 #include "rand.h"
 #include "pq.h"
 #include "sch.h"
@@ -18,10 +19,11 @@ void log_full(uint64_t raw) {
 }
 
 void test_sch() {
+    u64 zero = 0;
 
-    SCH* sch = sch_init();
+    SCH* sch = sch_init(&zero);
 
-    uint64_t event = 7 << (E_BITS - T_BITS) | 1000;
+    uint64_t event = 3 << (E_BITS - T_BITS) | 1000;
 
     printf("TEST SCHEDULE 1\n");
 

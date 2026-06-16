@@ -2,8 +2,10 @@
 #include "sch.h"
 #include "pq.h"
 #include "constants.h"
+#include "rand.h"
+#include "types.h"
 
-SCH* sch_init(){
+SCH* sch_init(u64* rand){
     SCH* sch = malloc(sizeof(SCH));
 
     sch->now = 0;
@@ -15,6 +17,8 @@ SCH* sch_init(){
     for (int i = 0; i < SCH_BUCKETS; i++) {
         sch->buckets[i] = pq_init();
     }
+
+    sch->rand = rand;
 
     return sch;
 }
@@ -163,7 +167,6 @@ uint64_t sch_pop(SCH* sch) {
             // need to do &7 to get current bucket index, 
             // or >>3 to get number of cycles through all buckets
             sch->current_bucket++;
-            printf("incrememting bucket\n");
         } while(pq_is_empty(sch->buckets[sch->current_bucket & BUCKET_MASK]));
         
     }
@@ -238,6 +241,18 @@ uint64_t sch_pop(SCH* sch) {
 
                 uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
                 uint64_t priority = seconds & P_MASK;
+
+                // don't schedule them exactly on the second, otherwise type + param determine tiebreaking
+                // for far out events, just make it random for the ordering but within that second
+                // so what exactly are we going to do?
+                // i think the cleanest is to add 0 - 999,999,999 ns to the priority
+
+                
+                rand_next(sch->rand);
+                // correct but possibly slow due to division
+                //priority += (*sch->rand & MAX_U32) * 1000000000 / 4294967295;
+                // ez
+                priority += (((*sch->rand) & MAX_U32) >> 3);
 
                 pq_push(
                         sch->buckets[bucket], 

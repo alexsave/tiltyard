@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include "types.h"
 
 #include "pq.h"
 
@@ -13,6 +14,7 @@ typedef struct SCH {
     PQ ** buckets;
 
     PQ * slow_bucket;
+    u64 * rand;
 } SCH;
 
 // take the more interesting case first
@@ -46,7 +48,7 @@ static const uint8_t T_MASK = (1 << T_BITS) - 1;
 static const uint32_t PARAM_BITS = FULL_SIZE_BITS - P_BITS - T_BITS;
 static const uint32_t PARAM_MASK = (1 << PARAM_BITS) - 1;
 
-SCH* sch_init();
+SCH* sch_init(u64* rand);
 
 // maybe take one uint64_t as a param?
 void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns);
