@@ -88,6 +88,10 @@ void* fl_release(FL* fl, uint32_t id) {
     return fl->data + id*fl->type_size;
 }
 
+void* fl_get(FL* fl, uint32_t id) {
+    return fl->data + id*fl->type_size;
+}
+
 void fl_free(FL* fl) {
     free(fl->data);
     free(fl->stack);

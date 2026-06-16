@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "types.h"
 
 // fixed sized free list
 
@@ -20,6 +21,9 @@ FL* fl_init(uint8_t type_size, uint8_t reserved_ids);
 uint32_t fl_insert(FL* fl, void* data);
 
 void* fl_release(FL* fl, uint32_t id);
+
+// get without releasing
+void* fl_get(FL* fl, u32 id);
 
 void fl_free(FL* fl);
 
