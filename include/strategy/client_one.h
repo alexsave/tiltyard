@@ -1,6 +1,8 @@
 #ifndef CLIENT_ONE_H
 #define CLIENT_ONE_H
 
+#include "types.h"
+
 // this will eventually be C's equivalent of an interface but for now-
 
 
@@ -10,9 +12,13 @@ typedef struct CO {
 
 CO* co_init();
 
-uint64_t co_initial_boot_time(CO* co);
-uint64_t co_postboot_socket(CO* co);
-uint64_t co_base_latency(CO* co);
+char* co_get_name(CO* co);
+
+u32 co_on_snapshot(CO* co, void* snapshot);
+
+uint64_t co_initial_wakeup(CO* co);
+uint64_t co_processing_time(CO* co);
+uint64_t co_net_latency(CO* co);
 
 void co_free(CO* co);
 

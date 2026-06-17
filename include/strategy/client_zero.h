@@ -15,9 +15,9 @@ char* cz_get_name(CZ* cz);
 u32 cz_on_snapshot(CZ* cz, void* snapshot);
 
 
-uint64_t cz_initial_boot_time(CZ* cz);
-uint64_t cz_postboot_socket(CZ* cz);
-uint64_t cz_base_latency(CZ* cz);
+uint64_t cz_initial_wakeup(CZ* cz);
+uint64_t cz_processing_time(CZ* cz);
+uint64_t cz_net_latency(CZ* cz);
 
 void cz_free(CZ* cz);
 
