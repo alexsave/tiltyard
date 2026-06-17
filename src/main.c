@@ -64,57 +64,51 @@ typedef struct Response {
     u32 snapshot_id;// also boot or socket
 } Response;
 
+// $$, initial wake, processing time, latency
+typedef struct ClientNums {
+    
+} ClientNums;
 
 int main(int argc, char* argv[]){
+    TypeMetadata* tm = get_types();
     // Properly make sure we are using all the implementations
-    assign_indicies();
 
     // now here is the basic flow of things
     
-    u32 * client_allocations = malloc(IMPLS_COUNT * sizeof(u32*));
+    u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
+    printf("%d\n", tm->co_index);
     // now we can do
     // this shoudl definitely be done by main
-    client_allocations[cz_index] = 1;
-    client_allocations[co_index] = 1;
+    client_allocations[tm->cz_index] = 1;
+    client_allocations[tm->co_index] = 1;
 
-    Holder* ho = holder_init(client_allocations);
+    printf("initialzing holder\n");
+    Holder* ho = holder_init(tm, client_allocations);
+    printf("done initialzing holder\n");
 
     // let's fucking roll
 
-    // step one
-    // initalize all of them
+
+    // next step is to get all the awake times
+    // and yes this will immediately schedule like 10M events
+    // each of which needs... a packet id
+    // oh 
+    // maybe it's not a good idea to shove wakup into a special packet type
+
+    // fuck it
+    // we'll figure out later how to actually schedul eit
+    // mabye add a new boot type, like we preivously had, just to avoid the response redirection
+    // and shove the slow checker into the server type too
+
+    // shoudl be pretty easy to veirfy
+     
+    printf("getting in it times\n");
+    u64* inits = holder_get_init_ts(ho);
+    printf("%llu is a init time 0\n", inits[0]);
+    printf("%llu is a init time 1\n", inits[1]);
 
 
-    // Step one, make sure they 
-
-
-    //init_methods = [&cz_init, &co_init];
-//
-    //for init in init_methods
-        //clinets.push(init())
-
-    // fun interface stuff
-    //CZ* (*functionPtr)();
-    //functionPtr = &cz_init;
-    //CZ* cz = (*functionPtr)();
-//
-    //CO* (*functionPtr)();
-    //functionPtr = &co_init;
-    //CO* co = (*functionPtr)();
-//
-
-
-
-    // fun interface stuff
-
-    
-
-
-
-    //CZ* client = cz_init();
-
-    //CO* client1 = co_init();
 
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
@@ -373,6 +367,7 @@ int main(int argc, char* argv[]){
     sch_free(sch);
     rand_free(rand);
     free(server);
+    tm_free(tm);
 
     cb_free(hw_queue);
     cb_free(sw_queue);
