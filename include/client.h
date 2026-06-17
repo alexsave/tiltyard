@@ -22,14 +22,10 @@ typedef struct Client {
     u64 (*net_latency)(void* self);
 } Client;
 
-
-
 // just add more as you wish :)
 #define IMPLS \
-    X(cz) \
-    X(co) 
-
-static const u8 IMPLS_COUNT = 2;
+    X(co) \
+    X(cz)
 
 #define X(a1) \
     static Client a1 ##_client = { \
@@ -50,10 +46,11 @@ static Client ** all_clients;
 IMPLS
 #undef X
 
+static u8 IMPLS_COUNT = 0;
+
 void assign_indicies() {
     all_clients = malloc(2 * sizeof(Client*));
-    u32 i = 0;
-#define X(name) name ## _index = i; i++;
+#define X(name) name ## _index = IMPLS_COUNT; IMPLS_COUNT++;
 IMPLS
 #undef X
 
@@ -61,6 +58,10 @@ IMPLS
 IMPLS
 #undef X
 
+}
+
+static void all_clients_free(){
+    free(all_clients);
 }
 
 
