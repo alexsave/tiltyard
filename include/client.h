@@ -48,7 +48,7 @@ IMPLS
 
 static u8 IMPLS_COUNT = 0;
 
-void assign_indicies() {
+static void assign_indicies() {
     all_clients = malloc(2 * sizeof(Client*));
 #define X(name) name ## _index = IMPLS_COUNT; IMPLS_COUNT++;
 IMPLS

@@ -10,6 +10,7 @@
 #include "constants.h"
 
 #include "client.h"
+#include "holder.h"
 
 typedef struct Server {
     u8 executing;
@@ -73,43 +74,16 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
+    // this shoudl definitely be done by main
     client_allocations[cz_index] = 1;
     client_allocations[co_index] = 1;
+
+    Holder* ho = holder_init(client_allocations);
 
     // let's fucking roll
 
     // step one
     // initalize all of them
-
-    u32 type_index = 0;
-    // FINALLY this comes into play
-
-    u32 num_clients = 0; 
-    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) 
-        for (u32 i = 0; i < client_allocations[type_index]; i++)
-            num_clients++;
-    
-    // probably the biggest memory block in the entire program
-    void** client_data = malloc(num_clients * sizeof(void*));
-
-    type_index = 0;
-    u32 client_id = 0; 
-    // doesn't even matter if cz_index is 1 or 0 or whatever
-    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) {
-        for (u32 i = 0; i < client_allocations[type_index]; i++){
-            // so this is something like CZ*
-            client_data[client_id] = all_clients[type_index]->client_init();
-            //printf("%p %p \n", (void*)(all_clients[type_index]->client_free), client_data[client_id]);
-
-            // store this somewhere
-            client_id++;
-        }
-        // so go through all the types, and create client_allocation amount of that type of client 
-    }
-    
-
-    //printf("impls count %d cz is at %d\n", IMPLS_COUNT, cz_index);
-
 
 
     // Step one, make sure they 
@@ -173,7 +147,7 @@ int main(int argc, char* argv[]){
 
 
     //more interesting
-    //uint64_t client_id = 123; // good case for freelist maybe
+    uint64_t client_id = 123; // good case for freelist maybe
 
     uint64_t first_boot = 15;//cz_initial_boot_time(client);
 
@@ -396,7 +370,6 @@ int main(int argc, char* argv[]){
 
     }
 
-
     sch_free(sch);
     rand_free(rand);
     free(server);
@@ -404,30 +377,7 @@ int main(int argc, char* argv[]){
     cb_free(hw_queue);
     cb_free(sw_queue);
 
-
-
-    type_index = 0;
-    // FINALLY this comes into play
-    client_id = 0; 
-    // doesn't even matter if cz_index is 1 or 0 or whatever
-    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) {
-        for (u32 i = 0; i < client_allocations[type_index]; i++){
-            // so this is something like CZ*
-
-            // probably this is causing seg fault
-    
-            //printf("client id %d\n", client_id);
-            //printf("%p %p \n", (void*)(all_clients[type_index]->client_free), client_data[client_id]);
-
-            (all_clients[type_index]->client_free)(client_data[client_id]);
-            // store this somewhere
-            client_id++;
-        }
-
-    }
-    free(client_allocations);
-    // deceiving, but its really that mapping of index to client impl
-    all_clients_free();
+    holder_free(ho);
 
     return 0;
 }
