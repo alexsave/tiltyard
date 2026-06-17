@@ -6,8 +6,6 @@
 #include "sch.h"
 #include "fl.h"
 #include "cb.h"
-#include "strategy/client_zero.h"
-#include "strategy/client_one.h"
 #include "types.h"
 #include "constants.h"
 
@@ -67,6 +65,54 @@ typedef struct Response {
 
 
 int main(int argc, char* argv[]){
+    // Properly make sure we are using all the implementations
+    assign_indicies();
+
+    // now here is the basic flow of things
+    
+    u32 * client_allocations = malloc(IMPLS_COUNT * sizeof(u32*));
+
+    // now we can do
+    client_allocations[cz_index] = 1;
+    client_allocations[co_index] = 1;
+
+    // let's fucking roll
+
+    // step one
+    // initalize all of them
+
+    u32 type_index = 0;
+    // FINALLY this comes into play
+
+    u32 num_clients = 0; 
+    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) 
+        for (u32 i = 0; i < client_allocations[type_index]; i++)
+            num_clients++;
+    
+    // probably the biggest memory block in the entire program
+    void** client_data = malloc(num_clients * sizeof(void*));
+
+    type_index = 0;
+    u32 client_id = 0; 
+    // doesn't even matter if cz_index is 1 or 0 or whatever
+    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) {
+        for (u32 i = 0; i < client_allocations[type_index]; i++){
+            // so this is something like CZ*
+            client_data[client_id] = all_clients[type_index]->client_init();
+            //printf("%p %p \n", (void*)(all_clients[type_index]->client_free), client_data[client_id]);
+
+            // store this somewhere
+            client_id++;
+        }
+        // so go through all the types, and create client_allocation amount of that type of client 
+    }
+    
+
+    //printf("impls count %d cz is at %d\n", IMPLS_COUNT, cz_index);
+
+
+
+    // Step one, make sure they 
 
 
     //init_methods = [&cz_init, &co_init];
@@ -92,9 +138,9 @@ int main(int argc, char* argv[]){
 
 
 
-    CZ* client = cz_init();
+    //CZ* client = cz_init();
 
-    CO* client1 = co_init();
+    //CO* client1 = co_init();
 
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
@@ -127,9 +173,9 @@ int main(int argc, char* argv[]){
 
 
     //more interesting
-    uint64_t client_id = 123; // good case for freelist maybe
+    //uint64_t client_id = 123; // good case for freelist maybe
 
-    uint64_t first_boot = cz_initial_boot_time(client);
+    uint64_t first_boot = 15;//cz_initial_boot_time(client);
 
     Response awake = { .client_id = client_id, .snapshot_id = 0 | (1 << SNAPSHOT_BOOT_BIT) };
     u32 response_id = fl_insert(responses, &awake);
@@ -298,7 +344,7 @@ int main(int argc, char* argv[]){
 
                 // for now, le't sjust say we wena tto connect to the websocket
 
-                u64 delay = cz_postboot_socket(0);
+                u64 delay = 300000000;//cz_postboot_socket(0);
 
                 printf("%llu\n", delay);
 
@@ -326,7 +372,7 @@ int main(int argc, char* argv[]){
 
             // roughtly along these lines, need better solution
 
-            u64 base_jitter = cz_base_latency(0);
+            u64 base_jitter = 42;//cz_base_latency(0);
             u64 random_jitter = 
                 (base_jitter) + // 1.0x
                 (base_jitter >> 7) + // + ~.01x
@@ -352,12 +398,36 @@ int main(int argc, char* argv[]){
 
 
     sch_free(sch);
-    cz_free(client);
     rand_free(rand);
     free(server);
 
     cb_free(hw_queue);
     cb_free(sw_queue);
+
+
+
+    type_index = 0;
+    // FINALLY this comes into play
+    client_id = 0; 
+    // doesn't even matter if cz_index is 1 or 0 or whatever
+    for (type_index = 0; type_index < IMPLS_COUNT; type_index++) {
+        for (u32 i = 0; i < client_allocations[type_index]; i++){
+            // so this is something like CZ*
+
+            // probably this is causing seg fault
+    
+            //printf("client id %d\n", client_id);
+            //printf("%p %p \n", (void*)(all_clients[type_index]->client_free), client_data[client_id]);
+
+            (all_clients[type_index]->client_free)(client_data[client_id]);
+            // store this somewhere
+            client_id++;
+        }
+
+    }
+    free(client_allocations);
+    // deceiving, but its really that mapping of index to client impl
+    all_clients_free();
 
     return 0;
 }

@@ -1,10 +1,12 @@
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "strategy/client_zero.h"
 #include "sch.h"
 #include "types.h"
 
 CZ* cz_init() {
+    printf("client Z is init!\n");
     return malloc(sizeof(CZ));
 }
 

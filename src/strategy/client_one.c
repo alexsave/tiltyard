@@ -1,11 +1,14 @@
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "strategy/client_one.h"
 #include "sch.h"
 #include "types.h"
 
 CO* co_init() {
-    return malloc(sizeof(CO));
+    CO* a = malloc(sizeof(CO));
+    printf("client O is init at %p!\n", (void*)a);
+    return a;
 }
 
 char* co_get_name(CO* co){
@@ -33,5 +36,7 @@ u64 co_net_latency(CO* co) {
 
 
 void co_free(CO* co) {
+    // whats wrong with this one
+    printf("client O is free at %p!\n", (void*)co);
     free(co);
 }
