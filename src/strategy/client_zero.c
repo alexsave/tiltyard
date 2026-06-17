@@ -2,10 +2,20 @@
 
 #include "strategy/client_zero.h"
 #include "sch.h"
+#include "types.h"
 
 CZ* cz_init() {
     return malloc(sizeof(CZ));
 }
+
+char* cz_get_name(CZ* cz) {
+    return "client.0";
+}
+
+u32 cz_on_snapshot(CZ* cz, void* snapshot){
+    return 32;
+}
+
 
 uint64_t cz_initial_boot_time(CZ* cz) {
     return (uint64_t)24*60*60*S_TO_NS;

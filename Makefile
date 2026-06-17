@@ -1,5 +1,5 @@
 OBJDIR := out
-OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o client_zero.o cb.o)
+OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o client_zero.o cb.o client_one.o )
 
 out/%.o: src/%.c
 	gcc -c -Iinclude $< -o $@

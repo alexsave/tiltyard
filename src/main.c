@@ -7,8 +7,11 @@
 #include "fl.h"
 #include "cb.h"
 #include "strategy/client_zero.h"
+#include "strategy/client_one.h"
 #include "types.h"
 #include "constants.h"
+
+#include "client.h"
 
 typedef struct Server {
     u8 executing;
@@ -22,10 +25,6 @@ void log_full(uint64_t raw) {
             raw & PARAM_MASK);
 }
 
-// indicates a packet is a websocket thing
-static uint8_t WS_BIT = 0;
-// default HW packet, but easier to indicate this is a SW packet later
-static uint8_t SW_BIT = 1;
 
 // the ordering of these actually matters for tie breakers
 static const u32 HW_TO_SW_ID = 0;
@@ -69,6 +68,34 @@ typedef struct Response {
 
 int main(int argc, char* argv[]){
 
+
+    //init_methods = [&cz_init, &co_init];
+//
+    //for init in init_methods
+        //clinets.push(init())
+
+    // fun interface stuff
+    //CZ* (*functionPtr)();
+    //functionPtr = &cz_init;
+    //CZ* cz = (*functionPtr)();
+//
+    //CO* (*functionPtr)();
+    //functionPtr = &co_init;
+    //CO* co = (*functionPtr)();
+//
+
+
+
+    // fun interface stuff
+
+    
+
+
+
+    CZ* client = cz_init();
+
+    CO* client1 = co_init();
+
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
 
@@ -98,7 +125,6 @@ int main(int argc, char* argv[]){
     // no reservations
     FL* responses = fl_init(sizeof(Response), 0);
 
-    CZ* client = cz_init();
 
     //more interesting
     uint64_t client_id = 123; // good case for freelist maybe
