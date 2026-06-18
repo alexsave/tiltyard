@@ -11,6 +11,7 @@
 
 #include "client.h"
 #include "holder.h"
+#include "order.h"
 
 typedef struct Server {
     u8 executing;
@@ -37,16 +38,6 @@ static const u32 MIN_RESERVED_PACKET = EXEC_TO_SW_ID;
 static const u32 CONVERT_SENTINEL_VALUE = 0;
 
 // subtypes for server in types
-
-
-// ok so this is going to have a BUNCH of stuff in it, everything we need to specify an order
-// really these are client->server network events, but wel
-// ah that's the term
-// for now just type and clientid
-typedef struct Packet {
-    uint8_t type;
-    uint32_t client_id;
-} Packet;
 
 // these two are for clients
 // and they do limit us to only 2^30 snapshots but maybe that's ok
@@ -130,7 +121,7 @@ int main(int argc, char* argv[]){
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
 
-    FL* packets = fl_init(sizeof(Packet), MIN_RESERVED_PACKET);
+    FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
 
 
     CB* sw_queue = cb_init();
@@ -151,7 +142,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, (u64)(7)*24*60*60*S_TO_NS);
+    sch_schedule(sch, kill_event, (u64)(3)*24*60*60*S_TO_NS);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), 0);
@@ -175,9 +166,7 @@ int main(int argc, char* argv[]){
     // idk but this what the main loop will look a bit like
 
     while(1) {
-        printf("popping\n");
         uint64_t next = sch_pop(sch);
-        printf("done popping\n");
 
         uint64_t now_ns = sch_now_ns(sch);
         printf("Now %llu ~%llus - ", now_ns, now_ns/1000000000);
@@ -203,8 +192,6 @@ int main(int argc, char* argv[]){
 
                 u64 HW_TO_SW_DELAY = 10000;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (HW_TO_SW_ID & PARAM_MASK);
-                printf("hw to sw id is %u socket event %llu\n", HW_TO_SW_ID, socket_event);
-                printf("%llu\n", HW_TO_SW_ID );
                 sch_schedule(sch, socket_event, HW_TO_SW_DELAY);
             } else if (packet_id == HW_TO_SW_ID) {
                 if (cb_is_empty(hw_queue)) {
@@ -251,9 +238,9 @@ int main(int argc, char* argv[]){
 
                 u32 exec_packet_id = cb_deque(sw_queue);
 
-                //Packet out = *(Packet*)(fl_release(packets,params));
+                //Order out = *(Order*)(fl_release(orders,params));
                 //printf("server got a packet!!! %d, %d \n", out.type, out.client_id);
-                // TODO actually modify the order book based on packets[exec_packet_id]
+                // TODO actually modify the order book based on orders[exec_packet_id]
 
                 // also schedule a bunch of CLIENT_IN events
 
@@ -324,7 +311,7 @@ int main(int argc, char* argv[]){
         } else if (type == CLIENT_OUT_TYPE) {
 
             u32 packet_id = params;
-            Packet packet = *(Packet*)fl_get(packets, packet_id);
+            Order packet = *(Order*)fl_get(orders, packet_id);
 
             // roughtly along these lines, need better solution
 
@@ -342,7 +329,7 @@ int main(int argc, char* argv[]){
 
             sch_schedule(sch, out_event, random_jitter);
         } else if (type == CONTROL_TYPE) {
-            printf("slow repeat type\n");
+            printf("control type\n");
             // it will go here
             // and this will look a bit like the server event type
 
@@ -360,8 +347,10 @@ int main(int argc, char* argv[]){
 
                 u64 delay = 300000000;//cz_postboot_socket(0);
                 printf("%llu\n", delay);
-                Packet p = {.type = 1 << SNAPSHOT_SOCKET_BIT, .client_id = client_id};
-                u32 packet_id = fl_insert(packets,&p);
+                Order p = {
+                    .flags = 1 << WS_BIT, 
+                    .client_id = client_id };
+                u32 packet_id = fl_insert(orders,&p);
                 printf("packet id, %u\n", packet_id);
                 u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
 
@@ -376,16 +365,9 @@ int main(int argc, char* argv[]){
 
             } else if (control_id == CONTROL_PARAM_KILL) {
                 // gg 
-                
                 break;
             }
-
         } 
-
-
-        //boot has been removed. there is no difference between a computer that is off and a computer that is disconnected from the socket in this sim
-
-
 
     }
 

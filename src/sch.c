@@ -158,7 +158,7 @@ uint64_t sch_pop(SCH* sch) {
     //if ((((next >> PARAM_BITS) & T_MASK) == CONTROL_TYPE) && (next & PARAM_MASK == CONTROL_PARAM_SLOW)){
 
 
-    printf("next is %llu, slow param is %llu\n", next, ((CONTROL_TYPE << PARAM_BITS) | (CONTROL_PARAM_SLOW)));
+    //printf("next is %llu, slow param is %llu\n", next, ((CONTROL_TYPE << PARAM_BITS) | (CONTROL_PARAM_SLOW)));
 
     if ((next & E_MASK) == ((CONTROL_TYPE << PARAM_BITS) | CONTROL_PARAM_SLOW)) {
 
@@ -175,7 +175,6 @@ uint64_t sch_pop(SCH* sch) {
         if (!pq_is_empty(sch->slow_bucket)){
 
             while (!pq_is_empty(sch->slow_bucket)) {
-                printf("inifiten loop\n");
                 uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
 
 
@@ -202,7 +201,6 @@ uint64_t sch_pop(SCH* sch) {
             }
         }
 
-        printf("rescheduling recurring event\n");
         sch_schedule(sch, next, max_delta);
     }
 
