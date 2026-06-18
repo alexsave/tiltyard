@@ -4,23 +4,23 @@
 // fixed sized free list
 
 typedef struct FL {
-    uint32_t sp;
-    uint32_t* stack;
+    u32 sp;
+    u32* stack;
     // technically liek "any" or void* data, but easier this way
-    uint8_t* data;
-    uint32_t capacity;
+    u8* data;
+    u32 capacity;
     // combine these???
-    uint8_t type_size;
-    uint8_t reserved_ids;
+    u32 type_size;
+    u32 id_limit;
 } FL;
 
-static const uint32_t FL_INITIAL_CAPACITY = 8192;
+static const u32 FL_INITIAL_CAPACITY = 8192;
 
-FL* fl_init(uint8_t type_size, uint8_t reserved_ids);
+FL* fl_init(u8 type_size, u32 id_limit);
 
-uint32_t fl_insert(FL* fl, void* data);
+u32 fl_insert(FL* fl, void* data);
 
-void* fl_release(FL* fl, uint32_t id);
+void* fl_release(FL* fl, u32 id);
 
 // get without releasing
 void* fl_get(FL* fl, u32 id);
