@@ -13,6 +13,8 @@
 #include "holder.h"
 #include "order.h"
 
+#include "ob.h"
+
 typedef struct Server {
     u8 executing;
 } Server;
@@ -75,21 +77,108 @@ int main(int argc, char* argv[]){
 
     // let's fucking roll
 
+    // initial order book - two opposing orders across $100
 
-    // next step is to get all the awake times
-    // and yes this will immediately schedule like 10M events
-    // each of which needs... a packet id
-    // oh 
-    // maybe it's not a good idea to shove wakup into a special packet type
+    // two fake orders just to make thigns fun
+    Order p = {
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 9900,
+        .client_id = 0 };
+    u32 order_id99 = fl_insert(orders,&p);
 
-    // fuck it
-    // we'll figure out later how to actually schedul eit
-    // mabye add a new boot type, like we preivously had, just to avoid the response redirection
-    // and shove the slow checker into the server type too
+    Order p = {
+        .flags = 1 << IS_LIMIT_BIT, 
+        .quantity = 1,
+        .price = 10100,
+        .client_id = 1 };
+    u32 order_id101 = fl_insert(orders,&p);
 
-    // shoudl be pretty easy to veirfy
-     
-    printf("getting in it times\n");
+    // FINALLY bs comes in 
+
+
+    BS* ob_snapshots = bs_init(1000);
+    void* bs_address = 0;
+    // 1024 is overkill but hold on
+    u32 handle = bs_reserve(ob_snapshots, 1024, 1, &bs_address);
+
+    OrderBookMetadata* obm = (*OrderBookMetadata)bs_address;
+    // $101, $99
+    obm->lowest_ask = 10100;
+    obm->highest_bid = 9900;
+    obm->row_count = 2;
+
+    bs_address += sizeof(OrderBookMetadata);
+
+    for (u8 row = 0; row < obm->row_count; row++) {
+        //make it explicit
+
+        OrderBookRowMetadata* obrm = (*OrderBookRowMetadata)bs_address;
+        if (row == 0)
+            obrm->price = 9900;
+        else
+            obrm->price = 10100;
+
+        obrm->order_count = 1;
+
+        // interestingly my notes say to limit it to 10 quantity bits, combined with 22bit order id yeilds 32 bits
+        // yeah probably a good idea considering this will be a massive data thing
+
+        bs_address += sizeof(OrderBookRowMetadata);
+
+        for (u8 oi = 0; oi < obrm->order_count; oi++) {
+            // the fact that it's here tells us its limit
+            // adn the side tell us buy/sell
+            // and the price
+            // we just need quantity?
+            // which is stored in the order anyways...?
+            // well it's goig to be 32 bits anyways
+
+            OrderInBook* oib = (*OrderInBook)bs_address;
+            // ah this is so dumb
+            if (row == 0)
+                oib = order_id99;
+            else 
+                oib = order_id101;
+
+            bs_address += sizeof(OrderInBook);
+        }
+    }
+
+
+
+    // this is just one row btw
+    obrm
+
+        (obm+1) // jump past OBM fields?
+
+
+
+
+
+
+
+        // this is how we write to order book snapshot
+
+
+
+
+
+
+        // next step is to get all the awake times
+        // and yes this will immediately schedule like 10M events
+        // each of which needs... a packet id
+        // oh 
+        // maybe it's not a good idea to shove wakup into a special packet type
+
+        // fuck it
+        // we'll figure out later how to actually schedul eit
+        // mabye add a new boot type, like we preivously had, just to avoid the response redirection
+        // and shove the slow checker into the server type too
+
+        // shoudl be pretty easy to veirfy
+
+        printf("getting in it times\n");
     u64* inits = holder_get_init_ns(ho);
 
     for(u32 i = 0; i < ho->num_clients; i++) {
@@ -142,7 +231,7 @@ int main(int argc, char* argv[]){
     // we need to do that for ALL 10M clients
     // but we only need to do it once
     // but here's an easy way to get it
-    
+
     // Finish initialization section
 
     // ok so this is where we run the market simulator
@@ -241,12 +330,12 @@ int main(int argc, char* argv[]){
                 /*
                    if (need to convert stops)
                    schedule EXEC_TO_SW_ID eevent
-                    u64 SW_TO_EXEC_DELAY = 100;
-                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_TO_SW_ID & PARAM_MASK);
-                    sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
+                   u64 SW_TO_EXEC_DELAY = 100;
+                   u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_TO_SW_ID & PARAM_MASK);
+                   sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
                    cb_queue(convert_holder);
                    cb_queue(CONVERT_SENTINEL_VALUE);
-                
+
                  */
 
                 if (cb_is_empty(sw_queue)){
@@ -268,9 +357,9 @@ int main(int argc, char* argv[]){
                 }
 
                 if (cb_is_empty(sw_queue)) {
-                   u64 SW_TO_EXEC_DELAY = 100;
-                   u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
-                   sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
+                    u64 SW_TO_EXEC_DELAY = 100;
+                    u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
+                    sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
                 }
 
                 // this will pop the last CONVERT_SENTINEL_VALUE becuase we deque before we check
@@ -290,7 +379,7 @@ int main(int argc, char* argv[]){
             u32 response_id = params;
 
             Response response = *(Response*)fl_release(responses, response_id);
-            
+
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
 
@@ -298,7 +387,7 @@ int main(int argc, char* argv[]){
 
 
             // otherwise we actually look at the snapshot and do stuff with it
-            
+
 
 
         } else if (type == CLIENT_OUT_TYPE) {
@@ -374,6 +463,8 @@ int main(int argc, char* argv[]){
     cb_free(sw_queue);
 
     holder_free(ho);
+
+    bs_free(ob_snapshots);
 
     return 0;
 }

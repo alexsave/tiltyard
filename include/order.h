@@ -81,7 +81,7 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // ok we can work with this
 // could probably all be put in it's own class tbh 
 // yeah why not 
-static const u8 DIRECTION_BIT = 7;
+static const u8 BUY_DIRECTION_BIT = 7;
 static const u8 IS_LIMIT_BIT = 6; // otherwise market
 static const u8 HAS_STOP_BIT = 5;
 static const u8 OCO_BIT = 4;
