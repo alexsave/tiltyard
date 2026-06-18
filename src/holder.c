@@ -50,7 +50,7 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
 }
 
 // loop through all, get initalize wakeup values
-u64* holder_get_init_ts(Holder * ho){
+u64* holder_get_init_ns(Holder * ho){
     u64* init_ts = malloc(ho->num_clients * sizeof(u64));
     u32 client_id = 0;
     printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);

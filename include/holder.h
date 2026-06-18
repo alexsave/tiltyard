@@ -12,7 +12,7 @@ typedef struct Holder {
 } Holder;
 
 Holder* holder_init(TypeMetadata* tm, u32* client_allocations);
-u64* holder_get_init_ts(Holder * ho);
+u64* holder_get_init_ns(Holder * ho);
 void holder_free(Holder* ho);
 
 #endif
