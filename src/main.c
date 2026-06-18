@@ -149,6 +149,10 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
 
+    u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
+    // one week
+    sch_schedule(sch, kill_event, (u64)(7)*24*60*60*S_TO_NS);
+
     // no reservations
     FL* responses = fl_init(sizeof(Response), 0);
 
@@ -170,7 +174,7 @@ int main(int argc, char* argv[]){
 
     // idk but this what the main loop will look a bit like
 
-    for(int i = 0; i < 30; i++){
+    while(1) {
         printf("popping\n");
         uint64_t next = sch_pop(sch);
         printf("done popping\n");
@@ -372,6 +376,7 @@ int main(int argc, char* argv[]){
 
             } else if (control_id == CONTROL_PARAM_KILL) {
                 // gg 
+                
                 break;
             }
 
