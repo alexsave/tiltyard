@@ -26,13 +26,14 @@ void log_full(uint64_t raw) {
 
 
 // the ordering of these actually matters for tie breakers
-static const u32 HW_TO_SW_ID = 0;
-static const u32 EXEC_START_ID = 1;
-static const u32 EXEC_END_ID = 2;
-static const u32 EXEC_TO_SW_ID = 3;
-static const u32 MAX_RESERVED_ID = EXEC_TO_SW_ID;
+static const u32 HW_TO_SW_ID = MAX_PARAM - 0;
+static const u32 EXEC_START_ID = MAX_PARAM - 1;
+static const u32 EXEC_END_ID = MAX_PARAM - 2;
+static const u32 EXEC_TO_SW_ID = MAX_PARAM - 3;
+static const u32 MIN_RESERVED_PACKET = EXEC_TO_SW_ID;
 
 // this only works because HW_TO_SW_ID = 0 and is reserved
+// come back to this lol
 static const u32 CONVERT_SENTINEL_VALUE = 0;
 
 // subtypes for server in types
@@ -49,7 +50,8 @@ typedef struct Packet {
 
 // these two are for clients
 // and they do limit us to only 2^30 snapshots but maybe that's ok
-static const u8 SNAPSHOT_BOOT_BIT = 31;
+// none of this shit
+//static const u8 SNAPSHOT_BOOT_BIT = 31;
 
 static const u8 SNAPSHOT_SOCKET_BIT = 7;
 
@@ -70,6 +72,11 @@ typedef struct ClientNums {
 } ClientNums;
 
 int main(int argc, char* argv[]){
+    uint64_t seed = 603603603;
+    uint64_t* rand = rand_init(seed);
+    rand_next(rand);
+    SCH* sch = sch_init(rand);
+
     TypeMetadata* tm = get_types();
     // Properly make sure we are using all the implementations
 
@@ -104,20 +111,27 @@ int main(int argc, char* argv[]){
     // shoudl be pretty easy to veirfy
      
     printf("getting in it times\n");
-    u64* inits = holder_get_init_ts(ho);
-    printf("%llu is a init time 0\n", inits[0]);
-    printf("%llu is a init time 1\n", inits[1]);
+    u64* inits = holder_get_init_ns(ho);
+
+    for(u32 i = 0; i < ho->num_clients; i++) {
+        uint64_t client_id = i; 
+        uint64_t first_boot = inits[i];
+
+        uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
+        sch_schedule(sch, boot_event, first_boot);
+        printf("booting %u at %llu \n", i, inits[i]);
+    }
+
+    // and this is just "initial boot" - we don't need "inits" anymore now that it's in the scheudler
+    free(inits);
 
 
 
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
 
-    FL* packets = fl_init(sizeof(Packet), MAX_RESERVED_ID);
+    FL* packets = fl_init(sizeof(Packet), MIN_RESERVED_PACKET);
 
-    uint64_t seed = 603603603;
-    uint64_t* rand = rand_init(seed);
-    rand_next(rand);
 
     CB* sw_queue = cb_init();
     CB* hw_queue = cb_init();
@@ -126,11 +140,10 @@ int main(int argc, char* argv[]){
     CB* convert_holder = cb_init();
 
 
-    SCH* sch = sch_init(rand);
 
     // Initialization
 
-    uint64_t repeat_event = SLOW_REPEAT_TYPE << (PARAM_BITS) | 0;
+    uint64_t repeat_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_SLOW;
     // is 0 safe to schedule into?
     // maybe
     sch_schedule(sch, repeat_event, 0);
@@ -141,23 +154,12 @@ int main(int argc, char* argv[]){
 
 
     //more interesting
-    uint64_t client_id = 123; // good case for freelist maybe
 
-    uint64_t first_boot = 15;//cz_initial_boot_time(client);
 
-    Response awake = { .client_id = client_id, .snapshot_id = 0 | (1 << SNAPSHOT_BOOT_BIT) };
-    u32 response_id = fl_insert(responses, &awake);
-
-    uint64_t boot_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
-
-    // not all these operations are necessary but this is the template
-    //uint64_t boot_event = ((BOOT_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
-
-    // actually schedul ea client IN event with a speciic values in the response 
-
-    // type zero event
-    sch_schedule(sch, boot_event, first_boot);
-
+    // we need to do that for ALL 10M clients
+    // but we only need to do it once
+    // but here's an easy way to get it
+    
     // Finish initialization section
 
     // ok so this is where we run the market simulator
@@ -169,7 +171,9 @@ int main(int argc, char* argv[]){
     // idk but this what the main loop will look a bit like
 
     for(int i = 0; i < 30; i++){
+        printf("popping\n");
         uint64_t next = sch_pop(sch);
+        printf("done popping\n");
 
         uint64_t now_ns = sch_now_ns(sch);
         printf("Now %llu ~%llus - ", now_ns, now_ns/1000000000);
@@ -190,11 +194,13 @@ int main(int argc, char* argv[]){
 
 
             // packet arrives to server
-            if (packet_id > MAX_RESERVED_ID) {
+            if (packet_id < MIN_RESERVED_PACKET) {
                 cb_queue(hw_queue, packet_id);
 
                 u64 HW_TO_SW_DELAY = 10000;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (HW_TO_SW_ID & PARAM_MASK);
+                printf("hw to sw id is %u socket event %llu\n", HW_TO_SW_ID, socket_event);
+                printf("%llu\n", HW_TO_SW_ID );
                 sch_schedule(sch, socket_event, HW_TO_SW_DELAY);
             } else if (packet_id == HW_TO_SW_ID) {
                 if (cb_is_empty(hw_queue)) {
@@ -307,28 +313,6 @@ int main(int argc, char* argv[]){
             // special checks for snapshot id
 
 
-            if (snapshot_id & (1 << SNAPSHOT_BOOT_BIT)) {
-                printf("boot event\n");
-
-                // for now, le't sjust say we wena tto connect to the websocket
-
-                u64 delay = 300000000;//cz_postboot_socket(0);
-
-                printf("%llu\n", delay);
-
-                Packet p = {.type = 1 << SNAPSHOT_SOCKET_BIT, .client_id = client_id};
-
-                u32 packet_id = fl_insert(packets,&p);
-                printf("packet id, %u\n", packet_id);
-
-                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
-
-                //printf("delay %llu, event %llu\n", event, delay);
-
-                sch_schedule(sch, socket_event, delay);
-                continue;
-            }
-
             // otherwise we actually look at the snapshot and do stuff with it
             
 
@@ -353,8 +337,44 @@ int main(int argc, char* argv[]){
             u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
 
             sch_schedule(sch, out_event, random_jitter);
-        } else if (type == SLOW_REPEAT_TYPE) {
+        } else if (type == CONTROL_TYPE) {
             printf("slow repeat type\n");
+            // it will go here
+            // and this will look a bit like the server event type
+
+            // we should probalby actually you know wake up the client
+            u32 control_id = params;
+            if (control_id < MIN_CONTROL_PARAM) {
+                u32 client_id = params;
+                // bump client, not necessarily for first tim
+                // for now we'll just have them connect with a socket packet
+                // like we were doin earlier
+                // obviously not all clieints will want to do WS connection
+
+                printf("boot event\n");
+                // for now, le't sjust say we wena tto connect to the websocket
+
+                u64 delay = 300000000;//cz_postboot_socket(0);
+                printf("%llu\n", delay);
+                Packet p = {.type = 1 << SNAPSHOT_SOCKET_BIT, .client_id = client_id};
+                u32 packet_id = fl_insert(packets,&p);
+                printf("packet id, %u\n", packet_id);
+                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
+
+                sch_schedule(sch, socket_event, delay);
+
+            } else if (control_id == CONTROL_PARAM_SLOW) {
+                // ignore, mostly handled by sch.c
+            } else if (control_id == CONTROL_PARAM_EOD) {
+                // charge interest on borrowed shorts
+            } else if (control_id == CONTROL_PARAM_EOM) {
+                // charge clients subscription costs
+
+            } else if (control_id == CONTROL_PARAM_KILL) {
+                // gg 
+                break;
+            }
+
         } 
 
 

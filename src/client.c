@@ -14,7 +14,6 @@ TypeMetadata* get_types() {
 
     // these two need to combine
 
-
     #define X(a1) \
     Client* a1 = malloc(sizeof(Client)); \
         a1 ->client_init = (void* (*)())a1 ##_init; \
@@ -30,7 +29,6 @@ TypeMetadata* get_types() {
     #define X(a1) tm->all_clients[tm->a1 ## _index] = a1;
     IMPLS
     #undef X
-
 
 
     return tm; 
