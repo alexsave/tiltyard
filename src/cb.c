@@ -19,7 +19,7 @@ CB* cb_init() {
 }
 
 void cb_queue(CB* cb, u32 value) {
-    printf("queue requested %u\n", value);
+    //printf("queue requested %u\n", value);
     if (cb->start == INITIAL_START_INDEX) {
         // bit of a trick 
         cb->start = 0;

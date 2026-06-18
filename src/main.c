@@ -5,6 +5,7 @@
 #include "rand.h"
 #include "sch.h"
 #include "fl.h"
+#include "bs.h"
 #include "cb.h"
 #include "types.h"
 #include "constants.h"
@@ -48,9 +49,11 @@ typedef struct Response {
 } Response;
 
 // $$, initial wake, processing time, latency
-typedef struct ClientNums {
-    
-} ClientNums;
+typedef struct ClientSettings {
+    u8 ws;
+} ClientSettings;
+
+
 
 int main(int argc, char* argv[]){
     uint64_t seed = 603603603;
@@ -58,11 +61,13 @@ int main(int argc, char* argv[]){
     rand_next(rand);
     SCH* sch = sch_init(rand);
 
+    FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
+
     TypeMetadata* tm = get_types();
     // Properly make sure we are using all the implementations
 
     // now here is the basic flow of things
-    
+
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     printf("%d\n", tm->co_index);
@@ -74,6 +79,8 @@ int main(int argc, char* argv[]){
     printf("initialzing holder\n");
     Holder* ho = holder_init(tm, client_allocations);
     printf("done initialzing holder\n");
+
+    ClientSettings* client_settings = calloc(ho->num_clients, sizeof(ClientSettings));
 
     // let's fucking roll
 
@@ -87,12 +94,12 @@ int main(int argc, char* argv[]){
         .client_id = 0 };
     u32 order_id99 = fl_insert(orders,&p);
 
-    Order p = {
+    Order p2 = {
         .flags = 1 << IS_LIMIT_BIT, 
         .quantity = 1,
         .price = 10100,
         .client_id = 1 };
-    u32 order_id101 = fl_insert(orders,&p);
+    u32 order_id101 = fl_insert(orders,&p2);
 
     // FINALLY bs comes in 
 
@@ -102,7 +109,7 @@ int main(int argc, char* argv[]){
     // 1024 is overkill but hold on
     u32 handle = bs_reserve(ob_snapshots, 1024, 1, &bs_address);
 
-    OrderBookMetadata* obm = (*OrderBookMetadata)bs_address;
+    OrderBookMetadata* obm = (OrderBookMetadata*)bs_address;
     // $101, $99
     obm->lowest_ask = 10100;
     obm->highest_bid = 9900;
@@ -113,7 +120,7 @@ int main(int argc, char* argv[]){
     for (u8 row = 0; row < obm->row_count; row++) {
         //make it explicit
 
-        OrderBookRowMetadata* obrm = (*OrderBookRowMetadata)bs_address;
+        OrderBookRowMetadata* obrm = (OrderBookRowMetadata*)bs_address;
         if (row == 0)
             obrm->price = 9900;
         else
@@ -134,12 +141,12 @@ int main(int argc, char* argv[]){
             // which is stored in the order anyways...?
             // well it's goig to be 32 bits anyways
 
-            OrderInBook* oib = (*OrderInBook)bs_address;
+            OrderInBook* oib = (OrderInBook*)bs_address;
             // ah this is so dumb
             if (row == 0)
-                oib = order_id99;
+                oib->order_id = order_id99;
             else 
-                oib = order_id101;
+                oib->order_id = order_id101;
 
             bs_address += sizeof(OrderInBook);
         }
@@ -148,37 +155,29 @@ int main(int argc, char* argv[]){
 
 
     // this is just one row btw
-    obrm
-
-        (obm+1) // jump past OBM fields?
 
 
-
-
-
-
-
-        // this is how we write to order book snapshot
+    // this is how we write to order book snapshot
 
 
 
 
 
 
-        // next step is to get all the awake times
-        // and yes this will immediately schedule like 10M events
-        // each of which needs... a packet id
-        // oh 
-        // maybe it's not a good idea to shove wakup into a special packet type
+    // next step is to get all the awake times
+    // and yes this will immediately schedule like 10M events
+    // each of which needs... a order id
+    // oh 
+    // maybe it's not a good idea to shove wakup into a special order type
 
-        // fuck it
-        // we'll figure out later how to actually schedul eit
-        // mabye add a new boot type, like we preivously had, just to avoid the response redirection
-        // and shove the slow checker into the server type too
+    // fuck it
+    // we'll figure out later how to actually schedul eit
+    // mabye add a new boot type, like we preivously had, just to avoid the response redirection
+    // and shove the slow checker into the server type too
 
-        // shoudl be pretty easy to veirfy
+    // shoudl be pretty easy to veirfy
 
-        printf("getting in it times\n");
+    printf("getting in it times\n");
     u64* inits = holder_get_init_ns(ho);
 
     for(u32 i = 0; i < ho->num_clients; i++) {
@@ -198,7 +197,6 @@ int main(int argc, char* argv[]){
     Server* server = malloc(sizeof(Server));
     server->executing = 0;
 
-    FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
 
 
     CB* sw_queue = cb_init();
@@ -222,7 +220,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, kill_event, (u64)(3)*24*60*60*S_TO_NS);
 
     // no reservations
-    FL* responses = fl_init(sizeof(Response), 0);
+    FL* responses = fl_init(sizeof(Response), MAX_U32);
 
 
     //more interesting
@@ -260,24 +258,24 @@ int main(int argc, char* argv[]){
         if (type == SERVER_TYPE) {
             // something in the server
 
-            u64 packet_id = params;
+            u64 order_id = params;
 
 
-            // packet arrives to server
-            if (packet_id < MIN_RESERVED_PACKET) {
-                printf("packet %u arrives at server\n", packet_id);
-                cb_queue(hw_queue, packet_id);
+            // order arrives to server
+            if (order_id < MIN_RESERVED_PACKET) {
+                printf("order %llu arrives at server\n", order_id);
+                cb_queue(hw_queue, order_id);
 
                 u64 HW_TO_SW_DELAY = 10000;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (HW_TO_SW_ID & PARAM_MASK);
                 sch_schedule(sch, socket_event, HW_TO_SW_DELAY);
-            } else if (packet_id == HW_TO_SW_ID) {
+            } else if (order_id == HW_TO_SW_ID) {
                 if (cb_is_empty(hw_queue)) {
                     //weird
                     continue;
                 }
-                u32 moving_packet = cb_deque(hw_queue); // handle zero case
-                printf("hw to sw move requested for packet %u\n", moving_packet);
+                u32 moving_order = cb_deque(hw_queue); // handle zero case
+                printf("hw to sw move requested for order %u\n", moving_order);
 
                 // If it's not empty, someone has already scheduled an exec_start_id
                 if (cb_is_empty(sw_queue)) {
@@ -286,14 +284,14 @@ int main(int argc, char* argv[]){
                     sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
                 }
 
-                cb_queue(sw_queue, moving_packet);
+                cb_queue(sw_queue, moving_order);
 
 
-            } else if (packet_id == EXEC_START_ID) {
+            } else if (order_id == EXEC_START_ID) {
                 // This relies on the server->executing state and 
                 // the fact that an EXEC_END_ID is scheduled are in sync
 
-                // cb is empty and executing - on the last packet 
+                // cb is empty and executing - on the last order 
                 // cb is empty and not executing - do nothing
                 // cb not empty and executing - don't do anything
                 // cb not empty and not executing - do somethign
@@ -310,19 +308,50 @@ int main(int argc, char* argv[]){
                 u64 EXEC_TIME = 10;
                 u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
                 sch_schedule(sch, socket_event, EXEC_TIME);
-            } else if (packet_id == EXEC_END_ID) {
+            } else if (order_id == EXEC_END_ID) {
                 if (cb_is_empty(sw_queue)) {
                     //really weird
                     server->executing = 0;
                     continue;
                 }
 
-                u32 exec_packet_id = cb_deque(sw_queue);
-                printf("exec finished on packet %u\n", exec_packet_id);
+                u32 exec_order_id = cb_deque(sw_queue);
+                printf("exec finished on order %u\n", exec_order_id);
+
+                Order* in = (Order*)fl_get(orders, exec_order_id);
+
+                // for now we'll just handle socket connections
+                if (in->flags & (1 << WS_BIT)) {
+                    //something like
+                    // toggle connection
+                    client_settings[in->client_id].ws = 
+                        !(client_settings[in->client_id].ws);
+                }
+
+                // accepted orders will modify this
+                u32 server_snapshot = handle;
+
+                // i know its ugly
+                for (u32 ci = 0; ci < ho->num_clients; ci++){
+                    if(client_settings[ci].ws) {
+                        printf("making response for %u\n", ci);
+                        // make a new response for them
+                        Response r = {.client_id = ci, .snapshot_id = server_snapshot};
+                        u32 response_id = fl_insert(responses, &r);
+                        u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+                        
+                        //.. delay is tricky, we actually need to go get client values again
+                        // probably using holder.
+                        // but for now let's just say exactly 100ms lol
+                        sch_schedule(sch, response_event, 100000000); 
+                    }
+                }
+
+
 
                 //Order out = *(Order*)(fl_release(orders,params));
-                //printf("server got a packet!!! %d, %d \n", out.type, out.client_id);
-                // TODO actually modify the order book based on orders[exec_packet_id]
+                //printf("server got a order!!! %d, %d \n", out.type, out.client_id);
+                // TODO actually modify the order book based on orders[exec_order_id]
 
                 // also schedule a bunch of CLIENT_IN events
 
@@ -349,10 +378,10 @@ int main(int argc, char* argv[]){
 
 
 
-            } else if (packet_id == EXEC_TO_SW_ID) {
-                u32 synth_packet_id = cb_deque(convert_holder);
+            } else if (order_id == EXEC_TO_SW_ID) {
+                u32 synth_order_id = cb_deque(convert_holder);
 
-                if (cb_is_empty(convert_holder) || synth_packet_id == CONVERT_SENTINEL_VALUE) {
+                if (cb_is_empty(convert_holder) || synth_order_id == CONVERT_SENTINEL_VALUE) {
                     continue;
                 }
 
@@ -363,9 +392,9 @@ int main(int argc, char* argv[]){
                 }
 
                 // this will pop the last CONVERT_SENTINEL_VALUE becuase we deque before we check
-                while(!cb_is_empty(convert_holder) && synth_packet_id != CONVERT_SENTINEL_VALUE) {
-                    cb_queue(sw_queue, synth_packet_id);
-                    synth_packet_id = cb_deque(convert_holder);
+                while(!cb_is_empty(convert_holder) && synth_order_id != CONVERT_SENTINEL_VALUE) {
+                    cb_queue(sw_queue, synth_order_id);
+                    synth_order_id = cb_deque(convert_holder);
                 }       
 
             }
@@ -392,8 +421,8 @@ int main(int argc, char* argv[]){
 
         } else if (type == CLIENT_OUT_TYPE) {
 
-            u32 packet_id = params;
-            Order packet = *(Order*)fl_get(orders, packet_id);
+            u32 order_id = params;
+            Order order = *(Order*)fl_get(orders, order_id);
 
             // roughtly along these lines, need better solution
 
@@ -407,7 +436,7 @@ int main(int argc, char* argv[]){
 
             printf("client out type\n");
 
-            u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
+            u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
 
             sch_schedule(sch, out_event, random_jitter);
         } else if (type == CONTROL_TYPE) {
@@ -420,7 +449,7 @@ int main(int argc, char* argv[]){
             if (control_id < MIN_CONTROL_PARAM) {
                 u32 client_id = params;
                 // bump client, not necessarily for first tim
-                // for now we'll just have them connect with a socket packet
+                // for now we'll just have them connect with a socket order
                 // like we were doin earlier
                 // obviously not all clieints will want to do WS connection
 
@@ -432,9 +461,9 @@ int main(int argc, char* argv[]){
                 Order p = {
                     .flags = 1 << WS_BIT, 
                     .client_id = client_id };
-                u32 packet_id = fl_insert(orders,&p);
-                printf("packet id, %u\n", packet_id);
-                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (packet_id & PARAM_MASK);
+                u32 order_id = fl_insert(orders,&p);
+                printf("order id, %u\n", order_id);
+                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
 
                 sch_schedule(sch, socket_event, delay);
 
