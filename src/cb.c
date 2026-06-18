@@ -19,6 +19,7 @@ CB* cb_init() {
 }
 
 void cb_queue(CB* cb, u32 value) {
+    printf("queue requested %u\n", value);
     if (cb->start == INITIAL_START_INDEX) {
         // bit of a trick 
         cb->start = 0;
@@ -59,6 +60,7 @@ u32 cb_deque(CB* cb) {
     if (cb->start == cb->end) {
         // there's gotta be an easier way than this
         cb->start = INITIAL_START_INDEX;
+        cb->end = 0;
     }
 
     return result;
