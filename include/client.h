@@ -30,7 +30,7 @@ typedef struct Client {
 } Client;
 
 typedef struct TypeMetadata {
-    Client ** all_clients;
+    Client * all_clients;
     #define X(name) u8 name ## _index;
     IMPLS
     #undef X

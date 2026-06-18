@@ -34,9 +34,9 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
             //printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
             printf("hi\n");
             // so this is something like CZ*
-            printf("pointer %p \n", (void*)(ho->tm->all_clients[type_index]));
+              printf("pointer %p \n", (void*)(ho->tm->all_clients[type_index].client_free));
             //printf("%p %p \n", (void*)(ho->tm->all_clients[type_index]->client_free), ho->client_data[client_id]);
-            ho->client_data[client_id] = (ho->tm->all_clients[type_index]->client_init)();
+            ho->client_data[client_id] = (ho->tm->all_clients[type_index].client_init)();
             printf("bye\n");
 
             // store this somewhere
@@ -57,7 +57,7 @@ u64* holder_get_init_ns(Holder * ho){
     for (u32 type_index = 0; type_index < ho->tm->IMPLS_COUNT; type_index++) {
         for (u32 i = 0; i < ho->client_allocations[type_index]; i++){
             // so this is something like CZ*
-            init_ts[client_id] = (ho->tm->all_clients[type_index]->initial_wakeup)(ho->client_data[client_id]);
+            init_ts[client_id] = (ho->tm->all_clients[type_index].initial_wakeup)(ho->client_data[client_id]);
             printf("%llu is a init time\n", init_ts[client_id]);
 
 
@@ -78,7 +78,7 @@ void holder_free(Holder * ho) {
             // so this is something like CZ* 
 
        
-            (ho->tm->all_clients[type_index]->client_free)(ho->client_data[client_id]);
+            (ho->tm->all_clients[type_index].client_free)(ho->client_data[client_id]);
             // store this somewhere
             client_id++;
         }   
