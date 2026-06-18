@@ -25,7 +25,6 @@ void log_full(uint64_t raw) {
             raw & PARAM_MASK);
 }
 
-
 // the ordering of these actually matters for tie breakers
 static const u32 HW_TO_SW_ID = MAX_PARAM - 0;
 static const u32 EXEC_START_ID = MAX_PARAM - 1;
@@ -36,17 +35,6 @@ static const u32 MIN_RESERVED_PACKET = EXEC_TO_SW_ID;
 // this only works because HW_TO_SW_ID = 0 and is reserved
 // come back to this lol
 static const u32 CONVERT_SENTINEL_VALUE = 0;
-
-// subtypes for server in types
-
-// these two are for clients
-// and they do limit us to only 2^30 snapshots but maybe that's ok
-// none of this shit
-//static const u8 SNAPSHOT_BOOT_BIT = 31;
-
-static const u8 SNAPSHOT_SOCKET_BIT = 7;
-
-//|= 1 << SNAPSHOT_BOOT_BIT;
 
 typedef struct Response {
     // client id may actually be 23 bits, so maybe we put flags into the top bits
@@ -188,6 +176,7 @@ int main(int argc, char* argv[]){
 
             // packet arrives to server
             if (packet_id < MIN_RESERVED_PACKET) {
+                printf("packet %u arrives at server\n", packet_id);
                 cb_queue(hw_queue, packet_id);
 
                 u64 HW_TO_SW_DELAY = 10000;
@@ -199,6 +188,7 @@ int main(int argc, char* argv[]){
                     continue;
                 }
                 u32 moving_packet = cb_deque(hw_queue); // handle zero case
+                printf("hw to sw move requested for packet %u\n", moving_packet);
 
                 // If it's not empty, someone has already scheduled an exec_start_id
                 if (cb_is_empty(sw_queue)) {
@@ -217,12 +207,14 @@ int main(int argc, char* argv[]){
                 // cb is empty and executing - on the last packet 
                 // cb is empty and not executing - do nothing
                 // cb not empty and executing - don't do anything
-                // cb not empty and not executing - !!!
+                // cb not empty and not executing - do somethign
 
                 if (server->executing || cb_is_empty(sw_queue)) {
                     // do nothing
                     continue;
                 }
+
+                printf("exec started\n");
 
                 server->executing = 1;
 
@@ -237,6 +229,7 @@ int main(int argc, char* argv[]){
                 }
 
                 u32 exec_packet_id = cb_deque(sw_queue);
+                printf("exec finished on packet %u\n", exec_packet_id);
 
                 //Order out = *(Order*)(fl_release(orders,params));
                 //printf("server got a packet!!! %d, %d \n", out.type, out.client_id);
@@ -364,6 +357,7 @@ int main(int argc, char* argv[]){
                 // charge clients subscription costs
 
             } else if (control_id == CONTROL_PARAM_KILL) {
+                printf("kill event triggered\n");
                 // gg 
                 break;
             }
