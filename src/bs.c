@@ -4,6 +4,8 @@
 #include <string.h>
 #include "bs.h"
 
+#include "types.h"
+
 // md_start is metadata start
 // in the case that the metadata is empty, it will be -1
 // then it will go up to 0, and increment as we "free" blocks
@@ -39,6 +41,7 @@ BS* bs_init(uint16_t metadata_capacity) {
 // pointer[0] = 42
 // alternative option is to return the address, and modify a passed in int32
 //size must be in bytes
+// size is actually an upper bound
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder){
     if (bs->md_start == bs->md_end) {
         printf("md start is looped back to md end, double the capacity\n");
@@ -190,6 +193,25 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
 
     ///
 
+}
+
+// in the case that we were uncertain of the actual size during reserve
+// we can use this to save some data
+// critically this can only be done on the last pushed blob, so be sure to do it soon after
+u8 bs_resize(BS* bs, u32 actual_size) {
+    if (bs->md_start == INITIAL_METADATA_INDEX && bs->md_end == 0)
+        return 0;
+
+    u32 last_md_index = (bs->md_end + bs->md_capacity - 1) % bs->md_capacity;
+
+    // is it even worth the possibility of pushing it back to match in case we loop through top?
+
+    if (bs->md[last_md_index].size < actual_size) {
+        printf("You just tried to resize a blob to a larger size. This is not supported\n");
+        return 1;
+    }
+    bs->md[last_md_index].size = actual_size;
+    return 0;
 }
 
 // because we stop managing this block in the metadata, 

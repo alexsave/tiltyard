@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "types.h"
 // fixed sized free list
 
 typedef struct BSM {
@@ -32,6 +34,8 @@ typedef struct BS {
 BS* bs_init(uint16_t metadata_capacity);
 void bs_free(BS* bs);
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder);
+u8 bs_resize(BS* bs, u32 actual_size);
+
 
 void* bs_get(BS* bs, uint32_t bs_number);
 
