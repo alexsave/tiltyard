@@ -206,11 +206,11 @@ u8 bs_resize(BS* bs, u32 actual_size) {
 
     // is it even worth the possibility of pushing it back to match in case we loop through top?
 
-    if (bs->md[last_md_index].size < actual_size) {
+    if (bs->metadata[last_md_index].size < actual_size) {
         printf("You just tried to resize a blob to a larger size. This is not supported\n");
         return 1;
     }
-    bs->md[last_md_index].size = actual_size;
+    bs->metadata[last_md_index].size = actual_size;
     return 0;
 }
 
