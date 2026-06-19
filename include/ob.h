@@ -4,6 +4,9 @@
 #include "types.h"
 #include "order.h"
 #include "bs.h"
+#include "fl.h"
+
+static const u8 REJECT = 1;
 
 // Lets start with MBP market by price
 // full, for every price level
@@ -13,6 +16,8 @@ typedef struct MBOIndex {
     // slightly easier parsing and updating if we consider it "offset from end of mbo levels array"
     // yeah lets do that
     u16 byte_offset;
+    // i didnt want to do this, but massively helps with figuring out orders
+    u16 quantity;
 } MBOIndex;
 
 typedef struct MBO {
@@ -110,8 +115,10 @@ blueprint for writing to order book
     }
 
 */
-void ob_market(u8 direction, u16 quantity, Order* in, void* old_mbo_raw, void* old_mbp, BS* mbo_bs, BS* mbp_bs);
 
-u32 calculate_mbo_size(MBO* old_mbo, u32 new_low_ask_index, u16 remaining_order_new_low_ask);
+void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs);
+//void ob_market(u8 direction, u16 quantity, Order* in, void* old_mbo_raw, void* old_mbp, BS* mbo_bs, BS* mbp_bs);
+//
+//u32 calculate_mbo_size(MBO* old_mbo, u32 new_low_ask_index, u16 remaining_order_new_low_ask);
 #endif
 

@@ -49,6 +49,7 @@ static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_SLOW;
 
 
 static const u32 MAX_U32 = 4294967295;
+static const u8 MAX_U8 = 255;
 
 #endif
 

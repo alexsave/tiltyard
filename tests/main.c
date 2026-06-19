@@ -3,6 +3,7 @@
 #include "test_fl.h"
 #include "test_bs.h"
 #include "test_sch.h"
+#include "test_ob.h"
 
 
 int main(int argc, char* argv[]){
@@ -15,7 +16,9 @@ int main(int argc, char* argv[]){
 
     //test_bs();
 
-    test_sch();
+    //test_sch();
+    
+    test_ob();
 
     return 0;
 }
