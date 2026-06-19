@@ -61,6 +61,8 @@ int main(int argc, char* argv[]){
     rand_next(rand);
     SCH* sch = sch_init(rand);
 
+    printf("size mbp %lu\n", sizeof(MBP));
+
     FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
 
     TypeMetadata* tm = get_types();
@@ -327,6 +329,8 @@ int main(int argc, char* argv[]){
                     client_settings[in->client_id].ws = 
                         !(client_settings[in->client_id].ws);
                 }
+
+                ob_market(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, 0, 0, ob_snapshots, ob_snapshots);
 
                 // accepted orders will modify this
                 u32 server_snapshot = handle;

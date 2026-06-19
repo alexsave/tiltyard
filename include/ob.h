@@ -2,6 +2,51 @@
 #define OB_H
 
 #include "types.h"
+#include "order.h"
+#include "bs.h"
+
+// Lets start with MBP market by price
+// full, for every price level
+typedef struct MBOIndex {
+    u16 price;
+    // from lowest byte of this whole structure
+    // slightly easier parsing and updating if we consider it "offset from end of mbo levels array"
+    // yeah lets do that
+    u16 byte_offset;
+} MBOIndex;
+
+typedef struct MBO {
+    u8 hi_bid_index;
+    u8 level_count;
+    MBOIndex levels[];
+    // after this is the actual order data
+} MBO;
+
+
+typedef struct MBOLevel {
+    u16 order_count;
+    u32 order_ids[];
+} MBOLevel;
+
+// maybe therse are enough maybe no
+typedef struct MBPLevel {
+    u16 price;
+    u16 quantity;
+} MBPLevel;
+
+typedef struct MBP {
+    u8 hi_bid_index;
+    u8 level_count;
+    MBPLevel levels[];
+} MBP;
+
+/*
+    MBO:
+    level count, hi bid index,
+    [price/byteoffset]
+    [[orderids]]
+*/
+
 
 typedef struct OrderBookMetadata {
     u16 lowest_ask;
@@ -65,7 +110,8 @@ blueprint for writing to order book
     }
 
 */
+void ob_market(u8 direction, u16 quantity, Order* in, void* old_mbo_raw, void* old_mbp, BS* mbo_bs, BS* mbp_bs);
 
-
+u32 calculate_mbo_size(MBO* old_mbo, u32 new_low_ask_index, u16 remaining_order_new_low_ask);
 #endif
 
