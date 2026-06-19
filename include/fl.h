@@ -1,3 +1,6 @@
+#ifndef FL_H
+#define FL_H
+
 #include <stdint.h>
 #include "types.h"
 
@@ -26,4 +29,6 @@ void* fl_release(FL* fl, u32 id);
 void* fl_get(FL* fl, u32 id);
 
 void fl_free(FL* fl);
+
+#endif
 
