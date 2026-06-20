@@ -61,6 +61,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
 
     if (bs->md_start == INITIAL_METADATA_INDEX/* && bs->md_end == 0*/) {
         if (bs->store_capacity < size) {
+            printf("doubling time\n");
     
             // double until it fits
             // easier but rare case - we don't need to copy, we just free and malloc
@@ -133,6 +134,8 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
             bs->metadata[bs->md_end].offset = last.offset + last.size;
             bs->metadata[bs->md_end].size = size;
 
+            *address_holder = &(bs->store[last.offset + last.size]);
+
             uint16_t result = bs->md_end;
 
             bs->md_end = (bs->md_end + 1) % bs->md_capacity;
@@ -147,6 +150,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
 
         if (bs->store_capacity - (last.offset + last.size) < size) {
             if (first.offset < size) {
+                printf("doubling time\n");
 
                 // it's possible that if we just shift it such that start offset is at 0, we can fit another block in
                 // but we'll do the easier thing and just copy everything without modifying the metadata at all
@@ -169,6 +173,8 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
                 bs->metadata[bs->md_end].offset = 0;
                 bs->metadata[bs->md_end].size = size;
 
+                *address_holder = &(bs->store[0]);
+
                 uint16_t result = bs->md_end;
 
                 bs->md_end = (bs->md_end + 1) % bs->md_capacity;
@@ -180,6 +186,8 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
             bs->metadata[bs->md_end].refs = refs;
             bs->metadata[bs->md_end].offset = last.offset + last.size;
             bs->metadata[bs->md_end].size = size;
+
+            *address_holder = &(bs->store[last.offset + last.size]);
 
             uint16_t result = bs->md_end;
 
