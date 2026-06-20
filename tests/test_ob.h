@@ -159,7 +159,29 @@ void test_ob() {
     ob_limit(fl_insert(orders, &p14), orders, mbo_handle++, mbo_bs);
     mbo_dump(bs_get(mbo_bs, mbo_handle));
     
+    Order p15 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 2,
+        .price = 9725,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p15), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
 
+    Order p16 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 2,
+        .price = 10000,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p16), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p17 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10200,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p17), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
 
     bs_free(mbo_bs);
     fl_free(orders);

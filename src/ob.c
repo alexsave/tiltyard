@@ -209,7 +209,7 @@ void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 level_count++;
 
                 // stop due to limit price - possibly partial fill
-                untouched_above = current_level - 1;// test this out in scenario with limit between ask and bid gap
+                untouched_above = current_level - multiplier;// test this out in scenario with limit between ask and bid gap
                 partial_fill = 1;
                 our_side = price;
                 their_side = next.price;
@@ -339,10 +339,10 @@ void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             //current_level = highest_untouched_index;
             if (direction == 1) {
                 //buy, we just updated highest bid
-                new_mbo->hi_bid_index = current_level;
+                new_mbo->hi_bid_index = new_current_level;
             } else {
                 //sell, we just updated lowest ask
-                new_mbo->hi_bid_index = current_level - 1;
+                new_mbo->hi_bid_index = new_current_level - 1;
             }
             new_current_level++;
             final_level_count++;
