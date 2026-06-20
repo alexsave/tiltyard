@@ -15,7 +15,7 @@ TypeMetadata* get_types() {
     #define X(a) \
         tm->all_clients[tm->a ## _index].client_init = (void* (*)())a ##_init; \
         tm->all_clients[tm->a ## _index].get_name = (char* (*)(void*))a ##_get_name; \
-        tm->all_clients[tm->a ## _index].on_snapshot = (u32 (*)(void*, void*))a ##_on_snapshot; \
+        tm->all_clients[tm->a ## _index].on_snapshot = (u8 (*)(void*, Context*))a ##_on_snapshot; \
         tm->all_clients[tm->a ## _index].client_free = (void (*)(void*))a ##_free; \
         tm->all_clients[tm->a ## _index].initial_wakeup = (u64 (*)(void*))a ##_initial_wakeup; \
         tm->all_clients[tm->a ## _index].processing_time = (u64 (*)(void*))a ##_processing_time; \

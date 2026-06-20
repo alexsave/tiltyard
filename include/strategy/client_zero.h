@@ -2,6 +2,8 @@
 #define CLIENT_ZERO_H
 
 #include "types.h"
+#include "context.h"
+
 
 // this will eventually be C's equivalent of an interface but for now-
 
@@ -12,8 +14,7 @@ typedef struct CZ {
 CZ* cz_init();
 
 char* cz_get_name(CZ* cz);
-u32 cz_on_snapshot(CZ* cz, void* snapshot);
-
+u8 cz_on_snapshot(CZ* cz, Context* ctx);
 
 uint64_t cz_initial_wakeup(CZ* cz);
 uint64_t cz_processing_time(CZ* cz);

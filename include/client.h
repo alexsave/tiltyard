@@ -2,6 +2,9 @@
 #define CLIENT_H
 
 #include <stdlib.h>
+#include "context.h"
+#include "types.h"
+
 #include "strategy/client_zero.h"
 #include "strategy/client_one.h"
 
@@ -17,8 +20,9 @@ typedef struct Client {
     // Read reads up to len(p) bytes into p.
     void* (*client_init)();
     char* (*get_name)(void* self);
-    //Order (*on_snapshot)(void* self, void* snapshot); 
-    u32 (*on_snapshot)(void* self, void* snapshot); 
+    //Order (*on_snapshot)(void* self, void* snapshot, Context* context); 
+    // return 1 means order, return 0 means no order
+    u8 (*on_snapshot)(void* self, Context* ctx); 
     void (*client_free)(void* self);
 
     // not as sure about these but hey 

@@ -4,6 +4,7 @@
 #include "strategy/client_zero.h"
 #include "sch.h"
 #include "types.h"
+#include "order.h"
 
 CZ* cz_init() {
     printf("client Z is init!\n");
@@ -14,8 +15,14 @@ char* cz_get_name(CZ* cz) {
     return "client.0";
 }
 
-u32 cz_on_snapshot(CZ* cz, void* snapshot){
-    return 32;
+u8 cz_on_snapshot(CZ* cz, Context* ctx){
+    Order* order_ptr = ctx->order_ptr;
+    order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
+        
+    order_ptr->price = ctx->random & MAX_U16;
+    order_ptr->quantity = (ctx->random & MAX_U8) >> 2;
+
+    return 1;
 }
 
 

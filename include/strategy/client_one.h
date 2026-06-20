@@ -2,6 +2,9 @@
 #define CLIENT_ONE_H
 
 #include "types.h"
+#include "order.h"
+#include "context.h"
+
 
 // this will eventually be C's equivalent of an interface but for now-
 
@@ -14,7 +17,7 @@ CO* co_init();
 
 char* co_get_name(CO* co);
 
-u32 co_on_snapshot(CO* co, void* snapshot);
+u8 co_on_snapshot(CO* co, Context* ctx);
 
 uint64_t co_initial_wakeup(CO* co);
 uint64_t co_processing_time(CO* co);

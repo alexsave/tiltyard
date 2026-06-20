@@ -4,6 +4,7 @@
 #include "strategy/client_one.h"
 #include "sch.h"
 #include "types.h"
+#include "order.h"
 
 CO* co_init() {
     CO* a = malloc(sizeof(CO));
@@ -15,8 +16,16 @@ char* co_get_name(CO* co){
     return "client.1";
 }
 
-u32 co_on_snapshot(CO* cz, void* snapshot){
-    return 32; 
+u8 co_on_snapshot(CO* cz, Context* ctx){
+    Order* order_ptr = ctx->order_ptr;
+    // randomly choose between buy and sell
+    order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
+
+
+    order_ptr->price = ctx->random & MAX_U16;
+    order_ptr->quantity = ctx->random & MAX_U8;
+
+    return 1;
 }
 
 u64 co_initial_wakeup(CO* co) {
