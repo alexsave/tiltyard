@@ -135,6 +135,31 @@ void test_ob() {
     assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->level_count == 7);
     assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->hi_bid_index == 4);
 
+    Order p12 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10100,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p12), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p13 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10000,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p13), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p14 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 2,
+        .price = 9700,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p14), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+    
+
 
     bs_free(mbo_bs);
     fl_free(orders);
