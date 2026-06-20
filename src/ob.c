@@ -14,12 +14,18 @@ u16 _data_start_offset(u16 level_count) {
     return sizeof(MBO) + level_count * sizeof(MBOIndex);
 }
 
-void* data_start(void* mbo_raw){
+void* _data_start(void* mbo_raw){
     return mbo_raw + sizeof(MBO) + ((MBO*)(mbo_raw))->level_count * sizeof(MBOIndex);
 }
 
 void mbo_dump(void* mbo_raw) {
     MBO* mbo = (MBO*)mbo_raw;
+
+    
+    printf("===raw DUMP===\n");
+    for (u8 i = 0; i < 32;i++){
+        printf("%u\n", *(u8*)(mbo_raw+i));
+    }
 
     printf("===MBO DUMP===\n");
     printf("MBO with %u levels and hi bid index %u\n", mbo->level_count, mbo->hi_bid_index);
@@ -37,17 +43,23 @@ void mbo_dump(void* mbo_raw) {
     }
 
 
-    void* data_start = mbo_raw + _data_start_offset(mbo->level_count);
+    void* data_start = _data_start(mbo_raw);
     printf("level data\n");
 
     for (u8 i = 0; i < mbo->level_count; i++) {
         MBOIndex mboi = mbo->levels[i];
         u8 byte_offset = mboi.byte_offset;
         //printf("new mbol %p\n", (void*)(data_);
-        MBOLevel mbol = *(MBOLevel*)(data_start + byte_offset);
-        printf("%uc\t with %u orders\t", mboi.price, mbol.order_count);
-        for (u8 j = 0; j < mbol.order_count; j++) {
-            printf("#%u\t", mbol.order_ids[j]);
+        MBOLevel* mbol = (MBOLevel*)(data_start + byte_offset);
+        for(u8 j = 0; j < 8; j++){
+            //printf("%u\n", *(u8*)(data_start+byte_offset+j));
+        }
+        printf("%uc\t with %u orders\t", mboi.price, mbol->order_count);
+        //printf("start of mbol %p\n", (data_start+byte_offset));
+        //printf("start of order_ids %p\n", &(mbol->order_ids));
+
+        for (u8 j = 0; j < mbol->order_count; j++) {
+            printf("#%u\t", mbol->order_ids[j]);
         }    
         printf("\n");
     }
@@ -62,7 +74,8 @@ void mbo_dump(void* mbo_raw) {
 // will need a change to bs
 // but not that hard, just need to update bs->metadata[(bs->md_end-1)%bs->md_capacity].size = size;
 
-void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
+void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
+    Order* in = (Order*)fl_get(orders, order_id);
     u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
     u16 quantity = in->quantity;
@@ -130,6 +143,8 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         u8 bottom;
         u8 top;
 
+        u8 has_opponents = 1;
+
         // buying
         if (direction == 1) {
             start_search = lo_ask_index;
@@ -137,16 +152,19 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             //more deep
             bottom = 0;
             top = old_mbo->level_count - 1;
+
+            has_opponents = lo_ask_index < old_mbo->level_count;
         } else {
             start_search = hi_bid_index;
             multiplier = -1;
             bottom = old_mbo->level_count-1;
             top = 0;
+            has_opponents = hi_bid_index != MAX_U8;
         }
 
-        // marketable limit order
-        if ((multiplier)*(old_mbo->levels[start_search].price) <= multiplier*price) {
+        if (has_opponents && (multiplier)*(old_mbo->levels[start_search].price) <= multiplier*price) {
             printf("we have a marketable limit order\n");
+            printf("starting search from %u and going %u\n", start_search, multiplier);
             // yes it is marketable, at least part of it can be matched immediately
             
             u16 remaining_quantity = quantity;
@@ -222,8 +240,8 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 
             }
 
-            void* old_data_start = data_start(old_mbo_raw);
-            void* new_data_start = data_start(new_mbo_raw);
+            void* old_data_start = _data_start(old_mbo_raw);
+            void* new_data_start = _data_start(new_mbo_raw);
 
             void* new_run = new_data_start;
             void* old_run = old_data_start;
@@ -396,8 +414,8 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             if (!price_level_exists)
                 new_mbo->level_count++;
 
-            void* old_data_start = new_mbo_raw + sizeof(MBO) + new_mbo->level_count * sizeof(MBOIndex);
-            void* new_data_start = new_mbo_raw + sizeof(MBO) + new_mbo->level_count * sizeof(MBOIndex);
+            void* old_data_start = _data_start(old_mbo_raw);
+            void* new_data_start = _data_start(new_mbo_raw);
 
             void* new_run = new_data_start;
             void* old_run = old_data_start;
@@ -436,20 +454,28 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                     u8 new_size;
                     new_mbo->levels[current_level].byte_offset = (new_run - new_data_start);
                     if (found_delta == 0 && mboi.price > price) {
+                        printf("inserting new price level\n");
                         // this is where we need to insert the new limit order
                         new_mbo->levels[current_level].price = price;
                         new_mbo->levels[current_level].quantity = quantity;
+                        printf("setting byte offset to %ld\n", (new_run - new_data_start));
+                        new_mbo->levels[current_level].byte_offset = (new_run - new_data_start);
 
                         MBOLevel* init = ((MBOLevel*)new_run);
                         init->order_count = 1;
                         init->order_ids[0] = order_id;
                         new_size = sizeof(MBOLevel) + init->order_count * sizeof(u32);
+                        //printf("%u\n", sizeof(MBOLevel));
+                        printf("new size set to %u, will affect next byte offset\n", new_size);
 
 
                         found_delta = 1;
                     } else {
+                        printf("copying existing price level\n");
                         new_mbo->levels[current_level].price = mboi.price;
                         new_mbo->levels[current_level].quantity = mboi.quantity;
+                        printf("setting byte offset to %ld\n", (new_run - new_data_start));
+                        new_mbo->levels[current_level].byte_offset = (new_run - new_data_start);
 
                         old_run = (old_data_start + mboi.byte_offset);
 

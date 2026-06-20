@@ -116,7 +116,7 @@ blueprint for writing to order book
 
 */
 
-void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs);
+void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs);
 void mbo_dump(void* mbo_raw);
 
 #endif
