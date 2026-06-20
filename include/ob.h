@@ -117,8 +117,7 @@ blueprint for writing to order book
 */
 
 void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs);
-//void ob_market(u8 direction, u16 quantity, Order* in, void* old_mbo_raw, void* old_mbp, BS* mbo_bs, BS* mbp_bs);
-//
-//u32 calculate_mbo_size(MBO* old_mbo, u32 new_low_ask_index, u16 remaining_order_new_low_ask);
+void mbo_dump(void* mbo_raw);
+
 #endif
 

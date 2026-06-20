@@ -10,6 +10,48 @@
 #include "order.h"
 #include "fl.h"
 
+u16 _data_start_offset(u16 level_count) {
+    return sizeof(MBO) + level_count * sizeof(MBOIndex);
+}
+
+void mbo_dump(void* mbo_raw) {
+    MBO* mbo = (MBO*)mbo_raw;
+
+    printf("===MBO DUMP===\n");
+    printf("MBO with %u levels and hi bid index %u\n", mbo->level_count, mbo->hi_bid_index);
+    for (u8 i = 0; i < mbo->level_count; i++) {
+        MBOIndex mboi = mbo->levels[i];
+        if (i == mbo->hi_bid_index)
+            printf("[");
+        else 
+            printf(" ");
+        printf("level\t%uc with quantity\t%u at offset\t%u", mboi.price, mboi.quantity, mboi.byte_offset);
+        if (i == mbo->hi_bid_index)
+            printf("] - highest bid\n");
+        else 
+            printf("\n");
+    }
+
+
+    void* data_start = mbo_raw + _data_start_offset(mbo->level_count);
+    printf("level data\n");
+
+    for (u8 i = 0; i < mbo->level_count; i++) {
+        MBOIndex mboi = mbo->levels[i];
+        u8 byte_offset = mboi.byte_offset;
+        //printf("new mbol %p\n", (void*)(data_);
+        MBOLevel mbol = *(MBOLevel*)(data_start + byte_offset);
+        printf("%uc\t with %u orders\t", mboi.price, mbol.order_count);
+        for (u8 j = 0; j < mbol.order_count; j++) {
+            printf("#%u\t", mbol.order_ids[j]);
+        }    
+        printf("\n");
+    }
+    printf("===MBO DUMP END===\n");
+
+}
+
+
 
 // were doing a lot just to figure out the size
 // it might be better to guess the next size we need, then only "lock it in" once we have the size
@@ -17,7 +59,7 @@
 // but not that hard, just need to update bs->metadata[(bs->md_end-1)%bs->md_capacity].size = size;
 
 void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
-    u8 direction = in->flags & (1 << BUY_DIRECTION_BIT);
+    u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
     u16 quantity = in->quantity;
 
@@ -25,8 +67,10 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
     u32 old_size = mbo_bs->metadata[mbo_handle].size;
     u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
 
+    u32 actual_size = max_new_size;
+
     void* new_mbo_raw;
-    u32 unused = bs_reserve(mbo_bs, max_new_size, 1, new_mbo_raw);
+    u32 unused = bs_reserve(mbo_bs, max_new_size, 10, &new_mbo_raw);
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
@@ -40,9 +84,35 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
     if (old_mbo->level_count == 0) {
         // very special case - this just goes into the ob no questions asked
         next_mbo_size = sizeof(MBO) + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
-    } else if (old_mbo->hi_bid_index == old_mbo->level_count-1) {
+
+        printf("old has zero levels\n");
+
+        new_mbo->level_count = 1;
+
+        if (direction == 1) {
+            printf("first bid in!\n");
+            // we now have one bid in, at 0
+            new_mbo->hi_bid_index = 0;
+        } else {
+            // we now have one ask in
+            printf("first ask in!\n");
+            new_mbo->hi_bid_index = MAX_U8;
+        }
+
+        new_mbo->levels[0].price = price;
+        new_mbo->levels[0].quantity = quantity;
+        printf("data start offset for 1 is %u\n", _data_start_offset(1));
+        new_mbo->levels[0].byte_offset =  0;
+
+        MBOLevel* mbol = (MBOLevel*)(new_mbo_raw + _data_start_offset(1));
+        printf("new mbol %p\n", (void*)mbol);
+        mbol->order_count = 1;
+        mbol->order_ids[0] = order_id;
+
+        actual_size = next_mbo_size;
+    //} else if (old_mbo->hi_bid_index == old_mbo->level_count-1) {
         // only bids
-    } else if (old_mbo->hi_bid_index == MAX_U8) {
+    //} else if (old_mbo->hi_bid_index == MAX_U8) {
         // only asks
     } else {
         i8 hi_bid_index = old_mbo->hi_bid_index;
@@ -381,7 +451,7 @@ void ob_limit(Order* in, u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
 
-    u32 actual_size = 1000;
+    //actual_size = 1000;
 
 // much much later
     bs_resize(mbo_bs, actual_size);
