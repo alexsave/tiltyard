@@ -15,7 +15,7 @@
 // there fore:
 
 uint64_t* rand_init(uint64_t seed) {
-    printf("rand_init invoked\n");
+    //printf("rand_init invoked\n");
 
     // yes this is 8 bytes but hey
     uint64_t* rand = malloc(1*sizeof(uint64_t));

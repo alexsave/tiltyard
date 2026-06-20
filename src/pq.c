@@ -48,7 +48,6 @@ void pq_push(PQ* pq, uint64_t event) {
 
     while (1) {
         //parent
-        uint32_t next = run >> 1; 
         //equals very very unlikely you'll see why 
         if (run == 1 || pq->heap[run >> 1] <= event) { 
             pq->heap[run] = event;

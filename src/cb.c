@@ -29,8 +29,6 @@ void cb_queue(CB* cb, u32 value) {
             return;
         }
 
-        // |56.. end start 1234|
-
         u32* doubled = malloc(2 * cb->capacity * sizeof(u32));
 
         // copy start to capacity

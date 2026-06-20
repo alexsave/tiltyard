@@ -56,7 +56,7 @@ typedef struct ClientSettings {
 
 
 int main(int argc, char* argv[]){
-    uint64_t seed = 603603603;
+    uint64_t seed = 603;
     uint64_t* rand = rand_init(seed);
     rand_next(rand);
 
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]){
 
     SCH* sch = sch_init(rand);
 
-    printf("size mbp %lu\n", sizeof(MBP));
+    //printf("size mbp %lu\n", sizeof(MBP));
 
     FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
 
@@ -76,15 +76,15 @@ int main(int argc, char* argv[]){
 
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
-    printf("%d\n", tm->co_index);
+    //printf("%d\n", tm->co_index);
     // now we can do
     // this shoudl definitely be done by main
     client_allocations[tm->cz_index] = 1;
     client_allocations[tm->co_index] = 1;
 
-    printf("initialzing holder\n");
+    //printf("initialzing holder\n");
     Holder* ho = holder_init(tm, client_allocations);
-    printf("done initialzing holder\n");
+    //printf("done initialzing holder\n");
 
     ClientSettings* client_settings = calloc(ho->num_clients, sizeof(ClientSettings));
 
@@ -93,70 +93,6 @@ int main(int argc, char* argv[]){
     // initial order book - two opposing orders across $100
 
     // two fake orders just to make thigns fun
-    Order p = {
-        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
-        .quantity = 1,
-        .price = 9900,
-        .client_id = 0 };
-    u32 order_id99 = fl_insert(orders,&p);
-
-    Order p2 = {
-        .flags = 1 << IS_LIMIT_BIT, 
-        .quantity = 1,
-        .price = 10100,
-        .client_id = 1 };
-    u32 order_id101 = fl_insert(orders,&p2);
-
-    // FINALLY bs comes in 
-
-
-    BS* ob_snapshots = bs_init(1000);
-    void* bs_address = 0;
-    // 1024 is overkill but hold on
-    u32 handle = bs_reserve(ob_snapshots, 1024, 1, &bs_address);
-
-    /*OrderBookMetadata* obm = (OrderBookMetadata*)bs_address;
-    // $101, $99
-    obm->lowest_ask = 10100;
-    obm->highest_bid = 9900;
-    obm->row_count = 2;
-
-    bs_address += sizeof(OrderBookMetadata);
-
-    for (u8 row = 0; row < obm->row_count; row++) {
-        //make it explicit
-
-        OrderBookRowMetadata* obrm = (OrderBookRowMetadata*)bs_address;
-        if (row == 0)
-            obrm->price = 9900;
-        else
-            obrm->price = 10100;
-
-        obrm->order_count = 1;
-
-        // interestingly my notes say to limit it to 10 quantity bits, combined with 22bit order id yeilds 32 bits
-        // yeah probably a good idea considering this will be a massive data thing
-
-        bs_address += sizeof(OrderBookRowMetadata);
-
-        for (u8 oi = 0; oi < obrm->order_count; oi++) {
-            // the fact that it's here tells us its limit
-            // adn the side tell us buy/sell
-            // and the price
-            // we just need quantity?
-            // which is stored in the order anyways...?
-            // well it's goig to be 32 bits anyways
-
-            OrderInBook* oib = (OrderInBook*)bs_address;
-            // ah this is so dumb
-            if (row == 0)
-                oib->order_id = order_id99;
-            else 
-                oib->order_id = order_id101;
-
-            bs_address += sizeof(OrderInBook);
-        }
-    }*/
 
     void* mbo_address = 0;
     BS* mbo_bs = bs_init(1000);
@@ -165,10 +101,10 @@ int main(int argc, char* argv[]){
     ((MBO*)mbo_address)->level_count = 0;
     last_mbo = mbo_handle;
 
-    void* mbp_address = 0;
+    /*void* mbp_address = 0;
     BS* mbp_bs = bs_init(10000);
     u32 mbp_handle = bs_reserve(mbp_bs, sizeof(MBP), 1, &mbp_address);
-    ((MBP*)mbp_address)->level_count = 0;
+    ((MBP*)mbp_address)->level_count = 0;*/
     
 
 
@@ -204,10 +140,8 @@ int main(int argc, char* argv[]){
 
         uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
         sch_schedule(sch, boot_event, first_boot);
-        printf("booting %u at %llu \n", i, inits[i]);
     }
 
-    // and this is just "initial boot" - we don't need "inits" anymore now that it's in the scheudler
     free(inits);
 
 
@@ -235,7 +169,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, (u64)(3)*24*60*60*S_TO_NS);
+    sch_schedule(sch, kill_event, (u64)(1)*24*60*60*S_TO_NS);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -258,21 +192,22 @@ int main(int argc, char* argv[]){
 
     // idk but this what the main loop will look a bit like
 
-    while(1) {
+    //for(u32 k = 0; k < 200; k++){
+    while(1){
         rand_next(rand);
         context->random = (*rand) & MAX_U32;
 
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
-        printf("Now %llu ~%llus - ", now_ns, now_ns/1000000000);
-        log_full(next);
+        printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
+        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
+        //log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
         uint64_t params = next & PARAM_MASK;
 
-        uint32_t start_server_exec = 2;
 
 
         // different from waht is below
@@ -340,7 +275,6 @@ int main(int argc, char* argv[]){
                 printf("exec finished on order %u\n", exec_order_id);
 
                 Order* in = (Order*)fl_get(orders, exec_order_id);
-                printf("order info %u %u %u %u\n", in->flags, in->quantity, in->price, in->client_id);
 
                 // for now we'll just handle socket connections
                 if (in->flags & (1 << WS_BIT)) {
@@ -349,7 +283,10 @@ int main(int argc, char* argv[]){
                     client_settings[in->client_id].ws = 
                         !(client_settings[in->client_id].ws);
                 }  else {
+                    printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
+
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs);
+                    mbo_dump(bs_get(mbo_bs, last_mbo));
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }
 
@@ -439,7 +376,7 @@ int main(int argc, char* argv[]){
 
             Response response = *(Response*)fl_release(responses, response_id);
 
-            printf("response gotten\n");
+            //printf("response gotten\n");
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
@@ -447,8 +384,7 @@ int main(int argc, char* argv[]){
             // otherwise we actually look at the snapshot and do stuff with it
 
             
-            void* mbo_raw = bs_get(mbo_bs, mbo_handle);
-            printf("mbo gotten\n");
+            void* mbo_raw = bs_get(mbo_bs, snapshot_id);
 
             // reserved client space for order
             // just need something to copy from
@@ -458,21 +394,16 @@ int main(int argc, char* argv[]){
             context->order_ptr = empty;
             context->mbo_snapshot = mbo_raw;
 
-            printf("emtpy reserved\n");
             
             // wait a minute, will this go out of scope. hopefully not
-            Order* client_order = 0;//client#on_tick( mbo_raw);
             u8 action = holder_client_on_snapshot(ho, client_id, context);
-            printf("client consulted, action %u\n", action);
             if (action == 0) {
                 fl_release(orders, order_id);
             } else {
                 empty->client_id = client_id;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
                 u64 delay = 300000000;
-                printf("about to schedule\n");
                 sch_schedule(sch, order_event, delay);
-                printf("scheduled\n");
             }
 
 
@@ -482,7 +413,7 @@ int main(int argc, char* argv[]){
         } else if (type == CLIENT_OUT_TYPE) {
 
             u32 order_id = params;
-            Order order = *(Order*)fl_get(orders, order_id);
+            //Order order = *(Order*)fl_get(orders, order_id);
 
             // roughtly along these lines, need better solution
 
@@ -517,12 +448,10 @@ int main(int argc, char* argv[]){
                 // for now, le't sjust say we wena tto connect to the websocket
 
                 u64 delay = 300000000;//cz_postboot_socket(0);
-                printf("%llu\n", delay);
                 Order p = {
                     .flags = 1 << WS_BIT, 
                     .client_id = client_id };
                 u32 order_id = fl_insert(orders,&p);
-                printf("order id, %u\n", order_id);
                 u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
 
                 sch_schedule(sch, socket_event, delay);
@@ -553,7 +482,6 @@ int main(int argc, char* argv[]){
 
     holder_free(ho);
 
-    bs_free(ob_snapshots);
 
     return 0;
 }

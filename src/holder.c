@@ -32,19 +32,19 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
     for (type_index = 0; type_index < tm->IMPLS_COUNT; type_index++) {
         for (u32 i = 0; i < client_allocations[type_index]; i++){
             //printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
-            printf("hi\n");
+            //printf("hi\n");
             // so this is something like CZ*
-              printf("pointer %p \n", (void*)(ho->tm->all_clients[type_index].client_free));
+              //printf("pointer %p \n", (void*)(ho->tm->all_clients[type_index].client_free));
             //printf("%p %p \n", (void*)(ho->tm->all_clients[type_index]->client_free), ho->client_data[client_id]);
             ho->client_data[client_id] = (ho->tm->all_clients[type_index].client_init)();
-            printf("bye\n");
+            //printf("bye\n");
 
             // store this somewhere
             client_id++;
         }
         // so go through all the types, and create client_allocation amount of that type of client
     }
-            printf("end of loop\n");
+            //printf("end of loop\n");
 
     return ho;
 }
@@ -53,12 +53,12 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
 u64* holder_get_init_ns(Holder * ho){
     u64* init_ts = malloc(ho->num_clients * sizeof(u64));
     u32 client_id = 0;
-    printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
+    //printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
     for (u32 type_index = 0; type_index < ho->tm->IMPLS_COUNT; type_index++) {
         for (u32 i = 0; i < ho->client_allocations[type_index]; i++){
             // so this is something like CZ*
             init_ts[client_id] = (ho->tm->all_clients[type_index].initial_wakeup)(ho->client_data[client_id]);
-            printf("%llu is a init time\n", init_ts[client_id]);
+            //printf("%llu is a init time\n", init_ts[client_id]);
 
 
             client_id++;
@@ -71,14 +71,14 @@ u64* holder_get_init_ns(Holder * ho){
 u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context) {
     u32 running_max = 0;
     u32 type_index = 0;
-    printf("client id %u\n", client_id);
+    //printf("client id %u\n", client_id);
 
-    printf("%p\n", ho);
-    printf("%p\n", ho->tm);
+    //printf("%p\n", ho);
+    //printf("%p\n", ho->tm);
     for (; type_index < ho->tm->IMPLS_COUNT; type_index++) {
         u32 bucket_count = ho->client_allocations[type_index];
         running_max += bucket_count;
-        printf("running_max %u\n", running_max);
+        //printf("running_max %u\n", running_max);
         if (running_max > client_id)
             break;
     }
@@ -92,7 +92,6 @@ u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context) {
 }
 
 void holder_free(Holder * ho) {
-    u32 type_index = 0;
     // FINALLY this comes into play
     u32 client_id = 0;  
     // doesn't even matter if cz_index is 1 or 0 or whatever

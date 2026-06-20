@@ -139,9 +139,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
     i8 hi_bid_index = old_mbo->hi_bid_index;
     i8 lo_ask_index = hi_bid_index + 1;
 
-    u16 hi_bid = old_mbo->levels[hi_bid_index].price;
-    u16 lo_ask = old_mbo->levels[lo_ask_index].price;
-
     u8 start_search;
     i8 multiplier = 0;
     u8 bottom;
@@ -198,7 +195,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
             //printf("current level %u\n", current_level);
             MBOIndex mboi = old_mbo->levels[current_level];
-            MBOIndex next = old_mbo->levels[current_level+multiplier];
 
 
             if (remaining_quantity > 0 && (multiplier)*mboi.price > (multiplier)*price) {
@@ -223,6 +219,10 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 //next_lowest_ask = mboi.price;
                 break;
             } else if(level_quantity == remaining_quantity) {
+
+                
+                printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
+
                 //printf("limit filled exactly at this level\n");
                 remaining_quantity = 0;
                 exact_level_wipe = 1;
@@ -233,6 +233,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 level_count--;
                 break;
             } else {
+                printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
 
                 //printf("takinga  bit of quantity\n");
                 remaining_quantity -= level_quantity;
