@@ -386,8 +386,6 @@ void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
 
-
-
         // buy 
         // 0------highest bid remains the same, then rows wiped or highest bid updated, then remanining asks remain the same
         // sell
@@ -406,7 +404,10 @@ void ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
             for(; start_search != bottom; start_search -= multiplier) {
-                if (old_mbo->levels[start_search-multiplier].price == price) {
+                printf("checking  %u, %u against %u\n", 
+old_mbo->levels[start_search-multiplier].price,(start_search-multiplier), price);
+                
+                if (old_mbo->levels[(u8)(start_search-multiplier)].price == price) {
                     match_level = start_search-multiplier;
                     price_level_exists = 1;
                     break;
