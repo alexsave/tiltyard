@@ -59,6 +59,10 @@ int main(int argc, char* argv[]){
     uint64_t seed = 603603603;
     uint64_t* rand = rand_init(seed);
     rand_next(rand);
+
+    Context* context = malloc(sizeof(Context));
+    context->random = (*rand) & MAX_U32;
+
     SCH* sch = sch_init(rand);
 
     printf("size mbp %lu\n", sizeof(MBP));
@@ -111,7 +115,7 @@ int main(int argc, char* argv[]){
     // 1024 is overkill but hold on
     u32 handle = bs_reserve(ob_snapshots, 1024, 1, &bs_address);
 
-    OrderBookMetadata* obm = (OrderBookMetadata*)bs_address;
+    /*OrderBookMetadata* obm = (OrderBookMetadata*)bs_address;
     // $101, $99
     obm->lowest_ask = 10100;
     obm->highest_bid = 9900;
@@ -152,8 +156,20 @@ int main(int argc, char* argv[]){
 
             bs_address += sizeof(OrderInBook);
         }
-    }
+    }*/
 
+    void* mbo_address = 0;
+    BS* mbo_bs = bs_init(1000);
+    u32 mbo_handle = bs_reserve(mbo_bs, sizeof(MBO), 1, &mbo_address);
+    u32 last_mbo;
+    ((MBO*)mbo_address)->level_count = 0;
+    last_mbo = mbo_handle;
+
+    void* mbp_address = 0;
+    BS* mbp_bs = bs_init(10000);
+    u32 mbp_handle = bs_reserve(mbp_bs, sizeof(MBP), 1, &mbp_address);
+    ((MBP*)mbp_address)->level_count = 0;
+    
 
 
     // this is just one row btw
@@ -243,6 +259,9 @@ int main(int argc, char* argv[]){
     // idk but this what the main loop will look a bit like
 
     while(1) {
+        rand_next(rand);
+        context->random = (*rand) & MAX_U32;
+
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
@@ -321,6 +340,7 @@ int main(int argc, char* argv[]){
                 printf("exec finished on order %u\n", exec_order_id);
 
                 Order* in = (Order*)fl_get(orders, exec_order_id);
+                printf("order info %u %u %u %u\n", in->flags, in->quantity, in->price, in->client_id);
 
                 // for now we'll just handle socket connections
                 if (in->flags & (1 << WS_BIT)) {
@@ -328,26 +348,32 @@ int main(int argc, char* argv[]){
                     // toggle connection
                     client_settings[in->client_id].ws = 
                         !(client_settings[in->client_id].ws);
+                }  else {
+                    last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs);
+                    //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }
 
-                ob_market(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, 0, 0, ob_snapshots, ob_snapshots);
+                if (0/*status == REJECT*/) {
+                    // only send reject to that one client, later
 
-                // accepted orders will modify this
-                u32 server_snapshot = handle;
+                } else {
+                    // accepted orders will modify this
+                    //u32 server_snapshot = handle;
 
-                // i know its ugly
-                for (u32 ci = 0; ci < ho->num_clients; ci++){
-                    if(client_settings[ci].ws) {
-                        printf("making response for %u\n", ci);
-                        // make a new response for them
-                        Response r = {.client_id = ci, .snapshot_id = server_snapshot};
-                        u32 response_id = fl_insert(responses, &r);
-                        u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
-                        
-                        //.. delay is tricky, we actually need to go get client values again
-                        // probably using holder.
-                        // but for now let's just say exactly 100ms lol
-                        sch_schedule(sch, response_event, 100000000); 
+                    // i know its ugly
+                    for (u32 ci = 0; ci < ho->num_clients; ci++){
+                        if(client_settings[ci].ws) {
+                            printf("making response for %u\n", ci);
+                            // make a new response for them
+                            Response r = {.client_id = ci, .snapshot_id = last_mbo};
+                            u32 response_id = fl_insert(responses, &r);
+                            u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+
+                            //.. delay is tricky, we actually need to go get client values again
+                            // probably using holder.
+                            // but for now let's just say exactly 100ms lol
+                            sch_schedule(sch, response_event, 100000000); 
+                        }
                     }
                 }
 
@@ -413,15 +439,45 @@ int main(int argc, char* argv[]){
 
             Response response = *(Response*)fl_release(responses, response_id);
 
+            printf("response gotten\n");
+
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
 
-            // special checks for snapshot id
-
-
             // otherwise we actually look at the snapshot and do stuff with it
 
+            
+            void* mbo_raw = bs_get(mbo_bs, mbo_handle);
+            printf("mbo gotten\n");
 
+            // reserved client space for order
+            // just need something to copy from
+            u32 order_id = fl_insert(orders, mbo_bs);
+            Order* empty = fl_get(orders, order_id);
+
+            context->order_ptr = empty;
+            context->mbo_snapshot = mbo_raw;
+
+            printf("emtpy reserved\n");
+            
+            // wait a minute, will this go out of scope. hopefully not
+            Order* client_order = 0;//client#on_tick( mbo_raw);
+            u8 action = holder_client_on_snapshot(ho, client_id, context);
+            printf("client consulted, action %u\n", action);
+            if (action == 0) {
+                fl_release(orders, order_id);
+            } else {
+                empty->client_id = client_id;
+                u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
+                u64 delay = 300000000;
+                printf("about to schedule\n");
+                sch_schedule(sch, order_event, delay);
+                printf("scheduled\n");
+            }
+
+
+ 
+    
 
         } else if (type == CLIENT_OUT_TYPE) {
 
@@ -444,7 +500,7 @@ int main(int argc, char* argv[]){
 
             sch_schedule(sch, out_event, random_jitter);
         } else if (type == CONTROL_TYPE) {
-            printf("control type\n");
+            //printf("control type\n");
             // it will go here
             // and this will look a bit like the server event type
 

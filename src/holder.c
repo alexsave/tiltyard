@@ -68,6 +68,29 @@ u64* holder_get_init_ns(Holder * ho){
     return init_ts;
 }
 
+u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context) {
+    u32 running_max = 0;
+    u32 type_index = 0;
+    printf("client id %u\n", client_id);
+
+    printf("%p\n", ho);
+    printf("%p\n", ho->tm);
+    for (; type_index < ho->tm->IMPLS_COUNT; type_index++) {
+        u32 bucket_count = ho->client_allocations[type_index];
+        running_max += bucket_count;
+        printf("running_max %u\n", running_max);
+        if (running_max > client_id)
+            break;
+    }
+    if (running_max < client_id){
+        printf("client id out of range of allocations, this is probably a bug\n");
+        return 255;
+    }
+
+    u8 ret = (ho->tm->all_clients[type_index].on_snapshot)(ho->client_data[client_id], context);
+    return ret;
+}
+
 void holder_free(Holder * ho) {
     u32 type_index = 0;
     // FINALLY this comes into play
