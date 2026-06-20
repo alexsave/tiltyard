@@ -64,6 +64,76 @@ void test_ob() {
     mbo_address = bs_get(mbo_bs, mbo_handle);
     mbo_dump(mbo_address);
     
+    Order p5 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 9700,
+        .client_id = 0 };
+    order_id = fl_insert(orders, &p5);
+    ob_limit(order_id, orders, mbo_handle, mbo_bs);
+    mbo_handle++;
+    mbo_address = bs_get(mbo_bs, mbo_handle);
+    mbo_dump(mbo_address);
+
+    Order p6 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 9700,
+        .client_id = 0 };
+    order_id = fl_insert(orders, &p6);
+    ob_limit(order_id, orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p7 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 9750,
+        .client_id = 0 };
+    order_id = fl_insert(orders, &p7);
+    ob_limit(order_id, orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+
+    Order p8 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10000,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p8), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->level_count == 5);
+    assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->hi_bid_index == 4);
+
+    Order p9 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10200,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p9), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p10 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 2,
+        .price = 10100,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p10), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+
+    // test the market matching part
+
+    Order p11 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 1,
+        .price = 10150,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p11), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+    
+    assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->level_count == 7);
+    assert(((MBO*)((bs_get(mbo_bs, mbo_handle))))->hi_bid_index == 4);
 
 
     bs_free(mbo_bs);
