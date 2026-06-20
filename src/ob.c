@@ -106,27 +106,27 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         // very special case - this just goes into the ob no questions asked
         next_mbo_size = sizeof(MBO) + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
 
-        printf("old has zero levels\n");
+        //printf("old has zero levels\n");
 
         new_mbo->level_count = 1;
 
         if (direction == 1) {
-            printf("first bid in!\n");
+            //printf("first bid in!\n");
             // we now have one bid in, at 0
             new_mbo->hi_bid_index = 0;
         } else {
             // we now have one ask in
-            printf("first ask in!\n");
+            //printf("first ask in!\n");
             new_mbo->hi_bid_index = MAX_U8;
         }
 
         new_mbo->levels[0].price = price;
         new_mbo->levels[0].quantity = quantity;
-        printf("data start offset for 1 is %u\n", _data_start_offset(1));
+        //printf("data start offset for 1 is %u\n", _data_start_offset(1));
         new_mbo->levels[0].byte_offset =  0;
 
         MBOLevel* mbol = (MBOLevel*)(new_mbo_raw + _data_start_offset(1));
-        printf("new mbol %p\n", (void*)mbol);
+        //printf("new mbol %p\n", (void*)mbol);
         mbol->order_count = 1;
         mbol->order_ids[0] = order_id;
 
@@ -180,8 +180,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         u8 partial_fill = 0;
 
         //bid for buy, ask for sell
-        u8 our_side = 0;
-        u8 their_side = 0;
 
         u8 level_count = old_mbo->level_count;
 
@@ -198,12 +196,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         // first figure out what rows we need to get rid of
         for(current_level = start_search; ; current_level += multiplier) {
 
-            printf("current level %u\n", current_level);
+            //printf("current level %u\n", current_level);
             MBOIndex mboi = old_mbo->levels[current_level];
             MBOIndex next = old_mbo->levels[current_level+multiplier];
-            //if(mboi.price == 2 || next.price == 2){
-            //printf("this is where price 2 comes from")
-            //}
+
+
             if (remaining_quantity > 0 && (multiplier)*mboi.price > (multiplier)*price) {
                 printf("not enough to fill limit, leaving as open bid or ask\n");
                 level_count++;
@@ -211,34 +208,33 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 // stop due to limit price - possibly partial fill
                 untouched_above = current_level - multiplier;// test this out in scenario with limit between ask and bid gap
                 partial_fill = 1;
-                our_side = price;
-                their_side = next.price;
                 break;
             }
 
             u16 level_quantity = mboi.quantity;
 
+
             if (level_quantity > remaining_quantity) {
                 modified_level = 1;
                 modified_level_index = current_level;
                 untouched_above = current_level;
-                their_side = mboi.price;
 
                 // this fill will be entirely filled on this level, making this lowest ask
                 //next_lowest_ask = mboi.price;
                 break;
             } else if(level_quantity == remaining_quantity) {
-                printf("limit filled exactly at this level\n");
+                //printf("limit filled exactly at this level\n");
                 remaining_quantity = 0;
                 exact_level_wipe = 1;
-                printf("found exact remaining quantity at level %u %u\n", current_level, mboi.price);
+                //printf("found exact remaining quantity at level %u %u\n", current_level, mboi.price);
                 untouched_above = current_level;
                 // this fill will be entirely filled on this level, mking NEXT highest lowest ask
                 //next_lowest_ask = 
-                their_side = next.price;
                 level_count--;
                 break;
             } else {
+
+                //printf("takinga  bit of quantity\n");
                 remaining_quantity -= level_quantity;
                 level_count--;
             }
@@ -246,6 +242,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
             if (start_search == top) {
+                if (remaining_quantity > 0) {
+                    partial_fill = 1;
+                    untouched_above = top;
+                    // we need to just add a new one with remaining quantity
+                }
                 // do something maybe?
 
                 break;
@@ -258,7 +259,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         u8 lowest_untouched_index = direction == 1 ? untouched_below : untouched_above;
 
         u8 highest_untouched_index = direction == 1 ?  untouched_above : untouched_below;
-        printf("lowest untouched index %u highest_untouched index %u\n", lowest_untouched_index, highest_untouched_index);
+        //printf("lowest untouched index %u highest_untouched index %u\n", lowest_untouched_index, highest_untouched_index);
 
         new_mbo->level_count = (lowest_untouched_index - 0) + (old_mbo->level_count - highest_untouched_index - 1) + (partial_fill | modified_level);
 
@@ -267,14 +268,14 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         void* new_data_start = _data_start(new_mbo_raw);
 
         if((*((u8*)(new_mbo_raw +2))) == 2){
-            printf("initial first price level set to 2 suddently\n");
+            //printf("initial first price level set to 2 suddently\n");
         }
 
         void* new_run = new_data_start;
         void* old_run = old_data_start;
 
 
-        printf("ods %p nds %p nr %p or %p\n", old_data_start, new_data_start, new_run, old_run);
+        //printf("ods %p nds %p nr %p or %p\n", old_data_start, new_data_start, new_run, old_run);
 
         // CHANGING TO EXCLUSIVE
 
@@ -283,7 +284,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
         current_level = 0;
         for (; current_level < lowest_untouched_index; current_level++) {
             MBOIndex mboi = old_mbo->levels[current_level];
-            printf("going through untouched low %u %u\n", mboi.price, mboi.quantity);
+            //printf("going through untouched low %u %u\n", mboi.price, mboi.quantity);
             //mbo_dump(new_mbo);
 
             new_mbo->levels[current_level].price = mboi.price;
@@ -294,14 +295,14 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
             u8 old_size = sizeof(MBOLevel) + (((MBOLevel*)old_run)->order_count) * sizeof(u32);
 
-            printf("copying from %p to %p\n", old_run, new_run);
+            //printf("copying from %p to %p\n", old_run, new_run);
 
             if((*((u8*)(new_mbo_raw +2))) == 2){
-                printf("first price level set to 2 before memcopy\n");
+                //printf("first price level set to 2 before memcopy\n");
             }
             memcpy(new_run, old_run, old_size);
             if((*((u8*)(new_mbo_raw +2))) == 2){
-                printf("first price level set to 2 after memcpy\n");
+                //printf("first price level set to 2 after memcpy\n");
             }
 
 
@@ -324,12 +325,16 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             new_mbo->hi_bid_index = new_current_level - 1;
 
         } else if (partial_fill) {
-            printf("we got a partial fill\n");
+            //printf("we got a partial fill\n");
             // insert an ask or a bid, doesn' tmatter the hi_bid_index update will determine
             new_mbo->levels[new_current_level].byte_offset = (new_run - new_data_start);
             // this is where we need to insert the new limit order
             new_mbo->levels[new_current_level].price = price;
             new_mbo->levels[new_current_level].quantity = remaining_quantity;
+
+            Order* current_order = (Order*)fl_get(orders, order_id);
+            current_order->quantity = remaining_quantity;
+            
 
             MBOLevel* init = ((MBOLevel*)new_run);
             init->order_count = 1;
@@ -368,9 +373,9 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
             u8 i = 0;
             for (; i < mod_level->order_count; i++) {
-                printf("going throuh orders %u\n", i);
-                u32 order_id = mod_level->order_ids[i];
-                Order* prev_order = (Order*)fl_get(orders, order_id);
+                //printf("going throuh orders %u\n", i);
+                u32 prev_order_id = mod_level->order_ids[i];
+                Order* prev_order = (Order*)fl_get(orders, prev_order_id);
 
                 u16 order_quantity = prev_order->quantity;
                 if (order_quantity > remaining_quantity) {
@@ -387,7 +392,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             MBOLevel* init = ((MBOLevel*)new_run);
             init->order_count = remaining_orders_on_level;
             for (u8 j = i; j < mod_level->order_count; j++) {
-                //printf("going throuh orders %u\n", j);
+                ////printf("going throuh orders %u\n", j);
                 init->order_ids[j-i] = mod_level->order_ids[j];
             }
 
@@ -409,7 +414,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
         for (old_current_level = highest_untouched_index+1; old_current_level < old_mbo->level_count; old_current_level++) {
-            printf("going through untouched above\n");
+            //printf("going through untouched above\n");
             MBOIndex mboi = old_mbo->levels[old_current_level];
 
             new_mbo->levels[new_current_level].price = mboi.price;
@@ -454,8 +459,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
             for(; start_search != bottom; start_search -= multiplier) {
-                printf("checking  %u, %u against %u\n", 
-                        old_mbo->levels[start_search-multiplier].price,(start_search-multiplier), price);
+                //printf("checking  %u, %u against %u\n", 
+                        //old_mbo->levels[start_search-multiplier].price,(start_search-multiplier), price);
 
                 if (old_mbo->levels[(u8)(start_search-multiplier)].price == price) {
                     match_level = start_search-multiplier;
@@ -507,7 +512,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 new_run += new_size;
             }
         } else {
-            printf("nonmarketable limit order with insert\n");
+            //printf("nonmarketable limit order with insert\n");
 
 
             u8 current_new_level = 0;
@@ -521,7 +526,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 new_mbo->levels[current_new_level].byte_offset = (new_run - new_data_start);
 
                 if (found == 0 && mboi.price > price) {
-                    printf("inserting new level\n");
+                    //printf("inserting new level\n");
                     // this is where we need to insert the new limit order
                     new_mbo->levels[current_new_level].price = price;
                     new_mbo->levels[current_new_level].quantity = quantity;
@@ -536,7 +541,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                     current_new_level++;
                 }
 
-                printf("coyping existing level\n");
+                //printf("coyping existing level\n");
 
                 new_mbo->levels[current_new_level].price = mboi.price;
                 new_mbo->levels[current_new_level].quantity = mboi.quantity;
@@ -555,7 +560,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
 
             if(found == 0){
-                printf("inserting new level\n");
+                //printf("inserting new level\n");
                 // this is where we need to insert the new limit order
                 new_mbo->levels[current_new_level].price = price;
                 new_mbo->levels[current_new_level].quantity = quantity;

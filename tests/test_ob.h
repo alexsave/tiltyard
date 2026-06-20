@@ -5,6 +5,38 @@
 #include "order.h"
 #include "constants.h"
 
+void test_fuzz(){
+    printf("\n\n\n");
+    void* mbo_address = 0;
+    BS* mbo_bs = bs_init(1000);
+    u32 mbo_handle = bs_reserve(mbo_bs, sizeof(MBO), 10, &mbo_address);
+    ((MBO*)mbo_address)->level_count = 0;
+
+    mbo_address = bs_get(mbo_bs, 0);
+
+    FL* orders = fl_init(sizeof(Order), 9128);
+
+    Order p1 = { 
+        .flags = (0 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 26,
+        .price = 44138,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p1), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    Order p2 = { 
+        .flags = (1 << BUY_DIRECTION_BIT) | (1 << IS_LIMIT_BIT),
+        .quantity = 203,
+        .price = 49867,
+        .client_id = 0 };
+    ob_limit(fl_insert(orders, &p2), orders, mbo_handle++, mbo_bs);
+    mbo_dump(bs_get(mbo_bs, mbo_handle));
+
+    bs_free(mbo_bs);
+    fl_free(orders);
+
+}
+
 void test_ob() {
     void* mbo_address = 0;
     BS* mbo_bs = bs_init(1000);
@@ -185,6 +217,8 @@ void test_ob() {
 
     bs_free(mbo_bs);
     fl_free(orders);
+
+    test_fuzz();
 }
 
 #endif
