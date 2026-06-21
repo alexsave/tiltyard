@@ -174,7 +174,7 @@ void mbo_dump(void* mbo_raw) {
 
         // we crash right after this i think
 
-        printf("start of mbol %p\n", (data_start+byte_offset));
+        //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
         if (mbol->order_count > 100){
@@ -183,7 +183,7 @@ void mbo_dump(void* mbo_raw) {
             
         }
         for (u8 j = 0; j < mbol->order_count; j++) {
-            //printf("#%u\t", mbol->order_ids[j]);
+            printf("#%u\t", mbol->order_ids[j]);
         }    
         printf("\n");
     }
@@ -214,9 +214,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
-    void* old_mbo_raw = bs_get(mbo_bs, mbo_handle);
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, mbo_handle);
     MBO* old_mbo = (MBO*)old_mbo_raw;
-
 
     i16 hi_bid_index = old_mbo->hi_bid_index;
     i16 lo_ask_index = hi_bid_index + 1;
@@ -448,7 +447,9 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         actual_size = (mbol + _mbo_level_size(((MBOLevel*)mbol)->order_count)) - new_mbo_raw;
     }
 
+
     // much much later
+    printf("actual size %u\n", actual_size);
     bs_resize(mbo_bs, actual_size);
     return unused;
 }

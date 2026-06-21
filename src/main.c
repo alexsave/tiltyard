@@ -99,6 +99,7 @@ int main(int argc, char* argv[]){
     //173002s
     //176077s
     //179352s
+    //176077sI//
     // nvm we get 3000 more seconds
     // not too shabby
     // wonder how big these blobs are getting
@@ -109,15 +110,11 @@ int main(int argc, char* argv[]){
     // server will read it to generate the second MBO, and this will be sent to first client that connects
     // but that's it
     // so complex
-    u32 last_mbo = bs_reserve(mbo_bs, sizeof(MBO), 2, &mbo_address);
+    // should only be freed after the next one is created, thus NOT messing up BS
+    u32 last_mbo = bs_reserve(mbo_bs, sizeof(MBO), 1, &mbo_address);
     ((MBO*)mbo_address)->level_count = 0;
     ((MBO*)mbo_address)->hi_bid_index = MAX_U16;
 
-
-    /*void* mbp_address = 0;
-    BS* mbp_bs = bs_init(10000);
-    u32 mbp_handle = bs_reserve(mbp_bs, sizeof(MBP), 1, &mbp_address);
-    ((MBP*)mbp_address)->level_count = 0;*/
 
     // next step is to get all the awake times
     // and yes this will immediately schedule like 10M events
@@ -281,13 +278,19 @@ int main(int argc, char* argv[]){
                 if (in->flags & (1 << WS_BIT)) {
                     //something like
                     // toggle connection
-                    client_settings[in->client_id].ws = 
-                        !(client_settings[in->client_id].ws);
-                }  else {
+                    client_settings[in->client_id].ws = !(client_settings[in->client_id].ws);
+                    // feels hacky but
+                    // this will get the last snapshot, hence increasing refcount
+                    if(client_settings[in->client_id].ws)
+                        bs_bump_refs(mbo_bs, last_mbo);
+                }  
+
+                // calculate ref count AFTER setting ws lol
+                if(!(in->flags & (1<<WS_BIT))) {
                     printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
                     
                     // mbo_dump + used to create next snapshot
-                    u16 ref_count = 2;
+                    u16 ref_count = 1;
 
                     // todo create l3 list later
                     for (u32 ci = 0; ci < ho->num_clients; ci++){
@@ -296,9 +299,14 @@ int main(int argc, char* argv[]){
                         }
                     }
     
+                    u32 prev_last_mbo = last_mbo;
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
-                    mbo_dump(bs_get(mbo_bs, last_mbo));
+                    mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
+
+                    bs_get(mbo_bs, prev_last_mbo);
+
+                    //bit hacky but ensures we can get the first snpashot into processing
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }
 
@@ -396,17 +404,23 @@ int main(int argc, char* argv[]){
             // otherwise we actually look at the snapshot and do stuff with it
 
             
+            printf("getting mbo raw\n");
             void* mbo_raw = bs_get(mbo_bs, snapshot_id);
+            printf("got mbo raw\n");
+            
+            Order tmp = {};
 
             // reserved client space for order
             // just need something to copy from
+            printf("inserting order to fl\n");
             u32 order_id = fl_insert(orders, mbo_bs);
+            printf("getting order from fl\n");
             Order* empty = fl_get(orders, order_id);
+            printf("got order from fl\n");
 
             context->order_ptr = empty;
             context->mbo_snapshot = mbo_raw;
 
-            
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);
             if (action == 0) {
@@ -415,12 +429,15 @@ int main(int argc, char* argv[]){
                 empty->client_id = client_id;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
                 u64 delay = 300000000;
+                printf("scheduling\n");
                 sch_schedule(sch, order_event, delay);
+                printf("scheduled\n");
             }
 
 
  
     
+            printf("client in type done\n");
 
         } else if (type == CLIENT_OUT_TYPE) {
 
