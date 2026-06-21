@@ -20,7 +20,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
         
     order_ptr->price = ctx->random & MAX_U16;
-    order_ptr->quantity = (ctx->random & MAX_U8) >> 2;
+    order_ptr->quantity = (ctx->random & MAX_U8) >> 2 + 1;
 
     return 1;
 }

@@ -61,6 +61,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
     // if we have zero, we need to explicitly handle it as -1 is not an index
 
     if (bs->md_start == INITIAL_METADATA_INDEX/* && bs->md_end == 0*/) {
+        printf("md start %u, md end %u\n", bs->md_start, bs->md_end);
         if (bs->store_capacity < size) {
             printf("doubling time\n");
     
@@ -85,6 +86,8 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
         // just to be consistent
         bs->md_end = 1;//(bs->md_end + 1) % bs->md_capacity;
 
+        printf("let me guess, md_start is not set for some fucking reason\n");
+        printf("md start %u, md end %u\n", bs->md_start, bs->md_end);
         *address_holder = &(bs->store[0]);
         //*address_holder = bs->store;???
 
@@ -234,13 +237,13 @@ void* bs_get(BS* bs, uint32_t bs_number) {
     bs->metadata[bs_number].refs = bs->metadata[bs_number].refs - 1;
 
     if(bs_number == 0){
-        printf("bs number %d, md start %d, refs %u\n", bs_number, bs->md_start, bs->metadata[bs_number].refs);
+        //printf("bs number %d, md start %d, refs %u\n", bs_number, bs->md_start, bs->metadata[bs_number].refs);
         //exit(1);
     }
     if (bs_number == bs->md_start) {
         //printf("wiping out some chunks, bs number refs %d\n", bs->metadata[bs->md_start].refs);
         while (bs->metadata[bs->md_start].refs == 0) {
-            printf("%u wiped\n", bs->md_start);
+            //printf("%u wiped\n", bs->md_start);
             bs->md_start = (bs->md_start + 1) % bs->md_capacity;
 
             if (bs->md_start == bs->md_end) {

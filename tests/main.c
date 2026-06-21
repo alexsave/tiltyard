@@ -10,7 +10,7 @@ int main(int argc, char* argv[]){
     // Random testing section
     //test_random();
 
-    //test_pq();
+    test_pq();
 
     //test_fl();
 
@@ -18,7 +18,7 @@ int main(int argc, char* argv[]){
 
     //test_sch();
     
-    test_ob();
+    //test_ob();
 
     return 0;
 }

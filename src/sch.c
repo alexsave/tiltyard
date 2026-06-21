@@ -47,6 +47,7 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // EZ
     uint64_t scheduled_event = (absolute_s << E_BITS) | (event & E_MASK);
 
+    //printf("%llu scheduled in slow\n", scheduled_event);
     pq_push(sch->slow_bucket, scheduled_event);
 
     return;
@@ -78,6 +79,7 @@ void sch_schedule(SCH* sch, uint64_t event, uint64_t delta_ns) {
     // if it's one over, it's not the case
 
     if (delta_ns > max_delta) {
+        //printf("scheduling %llu for slow %llu\n", event, delta_ns);
         // first off, delta_ns is pretty big already
         // lose some resolution and switch to slow scheduler
 
@@ -135,11 +137,11 @@ uint64_t sch_pop(SCH* sch) {
     // slow events  must be converted to fast events when they get in range. 
 
 
-    //printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
     // see if we can remove this check
     if(pq_is_empty(sch->buckets[sch->current_bucket&BUCKET_MASK])) {
         // advance until something scheduled
         do {
+            //printf("checking pq nubmer #%llu\n", sch->current_bucket & BUCKET_MASK);
             // important note: current_bucket is actually like buckets since start
             // need to do &7 to get current bucket index, 
             // or >>3 to get number of cycles through all buckets
@@ -148,6 +150,8 @@ uint64_t sch_pop(SCH* sch) {
 
     }
 
+    //printf("%llu %llu %llu %llu\n", sch->buckets[sch->current_bucket&BUCKET_MASK]->heap[0] , sch->buckets[sch->current_bucket&BUCKET_MASK]->heap[1] , sch->buckets[sch->current_bucket&BUCKET_MASK]->heap[2] , sch->buckets[sch->current_bucket&BUCKET_MASK]->heap[3] );
+    //printf("size %u\n", sch->buckets[sch->current_bucket & BUCKET_MASK]->current);
     uint64_t next = pq_pop(sch->buckets[sch->current_bucket & BUCKET_MASK]);
 
     sch->now = next >> E_BITS;
@@ -158,7 +162,7 @@ uint64_t sch_pop(SCH* sch) {
     //if ((((next >> PARAM_BITS) & T_MASK) == CONTROL_TYPE) && (next & PARAM_MASK == CONTROL_PARAM_SLOW)){
 
 
-    //printf("next is %llu, slow param is %llu\n", next, ((CONTROL_TYPE << PARAM_BITS) | (CONTROL_PARAM_SLOW)));
+    //printf("next is %llu, kill param is %llu\n", next, ((CONTROL_TYPE << PARAM_BITS) | (CONTROL_PARAM_KILL)));
 
     if ((next & E_MASK) == ((CONTROL_TYPE << PARAM_BITS) | CONTROL_PARAM_SLOW)) {
 
@@ -176,6 +180,7 @@ uint64_t sch_pop(SCH* sch) {
 
             while (!pq_is_empty(sch->slow_bucket)) {
                 uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
+                //printf("rescheduling to fast bucket %llu\n", pq_peek(sch->slow_bucket) & E_MASK);
 
 
                 if (peek_ts > latest_threshold)
@@ -196,13 +201,18 @@ uint64_t sch_pop(SCH* sch) {
                         sch->buckets[bucket], 
                         (priority << E_BITS) | (pop & E_MASK));
 
-                peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
 
             }
         }
 
         sch_schedule(sch, next, max_delta);
+    } 
+
+    if ((next & E_MASK) == ((CONTROL_TYPE << PARAM_BITS) | CONTROL_PARAM_KILL)){
+        printf("kill event\n");
+        exit(1);
     }
+
 
     // technically nanoseconds into the bucket, possibly unneeded
     //sch->now = next >> E_BITS;

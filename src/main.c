@@ -46,6 +46,7 @@ typedef struct Response {
     // hopefully 1 millino snapshots is enough
 
     u32 snapshot_id;// also boot or socket
+    u8 status;
 } Response;
 
 // $$, initial wake, processing time, latency
@@ -56,7 +57,7 @@ typedef struct ClientSettings {
 
 
 int main(int argc, char* argv[]){
-    uint64_t seed = 2303;
+    uint64_t seed = 603;
     uint64_t* rand = rand_init(seed);
     rand_next(rand);
 
@@ -168,7 +169,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, (u64)(1)*24*60*60*S_TO_NS);
+    sch_schedule(sch, kill_event, 7*24*60*60*S_TO_NS+1);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -199,9 +200,9 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
-        printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
-        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
-        //log_full(next);
+        //printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
+        printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
+        log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
@@ -286,9 +287,17 @@ int main(int argc, char* argv[]){
                         bs_bump_refs(mbo_bs, last_mbo);
                 }  
 
+                if((in->quantity == 0) && (!(in->flags & (1<<WS_BIT)))){
+                    // it will be rejected but they need to read again
+                    bs_bump_refs(mbo_bs, last_mbo);
+                }
+
+                printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
+                void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
+                //printf("in main, mbo at %p\n", mbo);
                 // calculate ref count AFTER setting ws lol
-                if(!(in->flags & (1<<WS_BIT))) {
-                    printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
+                if(in->quantity > 0 && !(in->flags & (1<<WS_BIT))) {
+                    //printf("operating on id %u\n", exec_order_id);
                     
                     // mbo_dump + used to create next snapshot
                     u16 ref_count = 1;
@@ -303,9 +312,9 @@ int main(int argc, char* argv[]){
                     u32 prev_last_mbo = last_mbo;
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
-                    if(exec_order_id > 43400){
-                        //mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
-                    }
+                    //if(exec_order_id > 146){
+                        //mbo_dump(mbo);
+                    //}
 
                     bs_get(mbo_bs, prev_last_mbo);
 
@@ -313,8 +322,12 @@ int main(int argc, char* argv[]){
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }
 
-                if (0/*status == REJECT*/) {
+                if ((in->quantity == 0) && (!(in->flags & (1<<WS_BIT)))/*status == REJECT*/) {
                     // only send reject to that one client, later
+                    Response r = {.client_id = in->client_id, .snapshot_id = last_mbo, .status=1};
+                    u32 response_id = fl_insert(responses, &r);
+                    u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+                    sch_schedule(sch, response_event, 100000000); 
 
                 } else {
                     // accepted orders will modify this
@@ -323,7 +336,7 @@ int main(int argc, char* argv[]){
                     // i know its ugly
                     for (u32 ci = 0; ci < ho->num_clients; ci++){
                         if(client_settings[ci].ws) {
-                            printf("making response for %u\n", ci);
+                            //printf("making response for %u\n", ci);
                             // make a new response for them
                             Response r = {.client_id = ci, .snapshot_id = last_mbo};
                             u32 response_id = fl_insert(responses, &r);
@@ -339,11 +352,6 @@ int main(int argc, char* argv[]){
 
 
 
-                //Order out = *(Order*)(fl_release(orders,params));
-                //printf("server got a order!!! %d, %d \n", out.type, out.client_id);
-                // TODO actually modify the order book based on orders[exec_order_id]
-
-                // also schedule a bunch of CLIENT_IN events
 
 
                 /*
@@ -397,59 +405,67 @@ int main(int argc, char* argv[]){
             // params provides response id
             u32 response_id = params;
 
+            //printf("releaseing response \n");
             Response response = *(Response*)fl_release(responses, response_id);
 
-            //printf("response gotten\n");
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
+            u8 status = response.status;
 
             // otherwise we actually look at the snapshot and do stuff with it
 
-            
-            printf("getting mbo raw\n");
+            // idk should we bump refs on error then send it anyways?
+            //void* mbo_raw
+                //if (status != 1){
+
+            //printf("getting mbo raw\n");
             void* mbo_raw = bs_get(mbo_bs, snapshot_id);
-            printf("got mbo raw\n");
-            
+            //printf("got mbo raw\n");
+                //}
+
             Order tmp = {};
 
             // reserved client space for order
             // just need something to copy from
-            printf("inserting order to fl\n");
-            u32 order_id = fl_insert(orders, mbo_bs);
-            printf("getting order from fl\n");
+            //printf("inserting order to fl\n");
+            u32 order_id = fl_insert(orders, &tmp);
+            //printf("getting order from fl\n");
             Order* empty = fl_get(orders, order_id);
-            printf("got order from fl\n");
+            //printf("got order from fl\n");
 
             context->order_ptr = empty;
             context->mbo_snapshot = mbo_raw;
 
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);
+
             if (action == 0) {
+                //printf("reeasing order id\n");
                 fl_release(orders, order_id);
             } else {
                 empty->client_id = client_id;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
                 u64 delay = 300000000;
-                printf("scheduling\n");
+                //printf("scheduling\n");
                 sch_schedule(sch, order_event, delay);
-                printf("scheduled\n");
+                //printf("scheduled\n");
             }
 
 
- 
-    
-            printf("client in type done\n");
+
+
+            //printf("client in type done\n");
 
         } else if (type == CLIENT_OUT_TYPE) {
+            printf("client out type\n");
 
             u32 order_id = params;
             //Order order = *(Order*)fl_get(orders, order_id);
 
             // roughtly along these lines, need better solution
 
-            u64 base_jitter = 42;//cz_base_latency(0);
+            u64 base_jitter = 200000000;//cz_base_latency(0);
             u64 random_jitter = 
                 (base_jitter) + // 1.0x
                 (base_jitter >> 7) + // + ~.01x
@@ -457,13 +473,12 @@ int main(int argc, char* argv[]){
 
 
 
-            printf("client out type\n");
-
             u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
+            //printf("scheduling %llu\n", out_event);
 
             sch_schedule(sch, out_event, random_jitter);
         } else if (type == CONTROL_TYPE) {
-            //printf("control type\n");
+            printf("control type\n");
             // it will go here
             // and this will look a bit like the server event type
 
@@ -497,6 +512,7 @@ int main(int argc, char* argv[]){
 
             } else if (control_id == CONTROL_PARAM_KILL) {
                 printf("kill event triggered\n");
+                exit(1);
                 // gg 
                 break;
             }
