@@ -100,6 +100,7 @@ int main(int argc, char* argv[]){
     //176077s
     //179352s
     //176077sI//
+    //~190170s 
     // nvm we get 3000 more seconds
     // not too shabby
     // wonder how big these blobs are getting
@@ -302,7 +303,9 @@ int main(int argc, char* argv[]){
                     u32 prev_last_mbo = last_mbo;
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
-                    mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
+                    if(exec_order_id > 43400){
+                        //mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
+                    }
 
                     bs_get(mbo_bs, prev_last_mbo);
 
