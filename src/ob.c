@@ -22,16 +22,19 @@ u16 _mbo_level_size(u16 order_count) {
     return sizeof(MBOLevel) + order_count * sizeof(u32);
 }
 
+void _write_level(MBO* new_mbo, u8 new_current_level, u16 price, u16 quantity, void* new_run){
+    void* new_data_start = _data_start(new_mbo);
+
+    new_mbo->levels[new_current_level].price = price;
+    new_mbo->levels[new_current_level].quantity = quantity;
+    new_mbo->levels[new_current_level].byte_offset = new_run - new_data_start;
+}
 
 void _copy_level_and_jump(MBO* old_mbo, u8 old_current_level, MBO* new_mbo, u8* new_current_level, void** new_run){
     MBOIndex mboi = old_mbo->levels[old_current_level];
 
     // assuming level count is set correctly
-    void* new_data_start = _data_start(new_mbo);
-
-    new_mbo->levels[*new_current_level].price = mboi.price;
-    new_mbo->levels[*new_current_level].quantity = mboi.quantity;
-    new_mbo->levels[*new_current_level].byte_offset = (*new_run - new_data_start);
+    _write_level(new_mbo, *new_current_level, mboi.price, mboi.quantity, *new_run);
 
     void* old_run = (_data_start((void*)old_mbo) + mboi.byte_offset);
 
@@ -64,14 +67,11 @@ void _append_to_level_and_jump(MBO* old_mbo, u8 old_current_level, MBO* new_mbo,
 
 // not reliant on old at all, this is a new row
 void _insert_level_and_jump(MBO* new_mbo, u8* new_current_level, void** new_run, u16 price, u16 quantity, u32 order_id){
-    printf("getting data start\n");
-    void* new_data_start = _data_start(new_mbo);
 
     // this is where we need to insert the new limit order
     printf("setting level data\n");
-    new_mbo->levels[*new_current_level].price = price;
-    new_mbo->levels[*new_current_level].quantity = quantity;
-    new_mbo->levels[*new_current_level].byte_offset = (*new_run - new_data_start);
+    _write_level(new_mbo, *new_current_level, price, quantity, *new_run);
+
     MBOLevel* mbol = (MBOLevel*)(*new_run);// seprate issue but probably need this too
     mbol->order_count = 1;
     mbol->order_ids[0] = order_id;
@@ -87,16 +87,12 @@ void _insert_level_and_jump(MBO* new_mbo, u8* new_current_level, void** new_run,
 void _partial_fill_and_insert_and_jump(MBO* old_mbo, u8 modified_level_index, MBO* new_mbo, u8* new_current_level, void** new_run, FL* orders, u16* remaining_quantity) {
     // a whole bunch of bullshit
      
-    void* new_data_start = _data_start(new_mbo);
 
     // the scenario where we partially fill a level
     // even worse, maybe partially fill an order
     MBOIndex* mboi = &(old_mbo->levels[modified_level_index]);
 
-    new_mbo->levels[*new_current_level].byte_offset = (*new_run - new_data_start);
-    // this is where we need to insert the new limit order
-    new_mbo->levels[*new_current_level].price = mboi->price;
-    new_mbo->levels[*new_current_level].quantity = mboi->quantity - (*remaining_quantity);
+    _write_level(new_mbo, *new_current_level, mboi->price, mboi->quantity - (*remaining_quantity), *new_run);
 
     //old_run = (old_data_start + mod_index->byte_offset);
     void* old_run = (_data_start((void*)old_mbo) + mboi->byte_offset);
