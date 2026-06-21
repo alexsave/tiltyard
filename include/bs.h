@@ -36,7 +36,8 @@ void bs_free(BS* bs);
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder);
 u8 bs_resize(BS* bs, u32 actual_size);
 
-
+void* bs_get_no_ref(BS* bs, u32 bs_number);
 void* bs_get(BS* bs, uint32_t bs_number);
+void bs_bump_refs(BS* bs, uint32_t bs_number);
 
 #endif

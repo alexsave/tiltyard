@@ -233,10 +233,14 @@ void* bs_get(BS* bs, uint32_t bs_number) {
     //BSM bsm = bsm.refs = bsm.refs - 1;
     bs->metadata[bs_number].refs = bs->metadata[bs_number].refs - 1;
 
-    //printf("bs number %d, md start %d\n", bs_number, bs->md_start);
+    if(bs_number == 0){
+        printf("bs number %d, md start %d, refs %u\n", bs_number, bs->md_start, bs->metadata[bs_number].refs);
+        //exit(1);
+    }
     if (bs_number == bs->md_start) {
-        printf("bs number refs %d\n", bs->metadata[bs->md_start].refs);
+        //printf("wiping out some chunks, bs number refs %d\n", bs->metadata[bs->md_start].refs);
         while (bs->metadata[bs->md_start].refs == 0) {
+            printf("%u wiped\n", bs->md_start);
             bs->md_start = (bs->md_start + 1) % bs->md_capacity;
 
             if (bs->md_start == bs->md_end) {
@@ -252,6 +256,15 @@ void* bs_get(BS* bs, uint32_t bs_number) {
 
     // i have no idea but somethign like this
     return (void *) (bs->store + bs->metadata[bs_number].offset);
+}
+
+// sidedoor for server
+void* bs_get_no_ref(BS* bs, u32 bs_number) {
+    return (void *) (bs->store + bs->metadata[bs_number].offset);
+}
+
+void bs_bump_refs(BS* bs, uint32_t bs_number) {
+    bs->metadata[bs_number].refs = bs->metadata[bs_number].refs + 1;
 }
 
 
