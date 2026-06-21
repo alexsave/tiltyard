@@ -10,7 +10,7 @@
 #include "order.h"
 #include "fl.h"
 
-u16 _data_start_offset(u16 level_count) {
+u32 _data_start_offset(u16 level_count) {
     return sizeof(MBO) + level_count * sizeof(MBOIndex);
 }
 
@@ -18,7 +18,7 @@ void* _data_start(void* mbo_raw){
     return mbo_raw + sizeof(MBO) + ((MBO*)(mbo_raw))->level_count * sizeof(MBOIndex);
 }
 
-u16 _mbo_level_size(u16 order_count) {
+u32 _mbo_level_size(u16 order_count) {
     return sizeof(MBOLevel) + order_count * sizeof(u32);
 }
 
@@ -133,7 +133,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
 }
 
 void mbo_dump(void* mbo_raw) {
-    if(1) return;
+    //if(1) return;
     MBO* mbo = (MBO*)mbo_raw;
 
 
@@ -163,7 +163,7 @@ void mbo_dump(void* mbo_raw) {
 
     for (u16 i = 0; i < mbo->level_count; i++) {
         MBOIndex mboi = mbo->levels[i];
-        u16 byte_offset = mboi.byte_offset;
+        u32 byte_offset = mboi.byte_offset;
         //printf("new mbol %p\n", (void*)(data_);
         MBOLevel* mbol = (MBOLevel*)(data_start + byte_offset);
         for(u8 j = 0; j < 8; j++){
@@ -177,12 +177,17 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
-        if (mbol->order_count > 100){
+        if (mbol->order_count > 10){
             printf("too many orders for now, exiting\n");
             exit(1);
             
         }
         for (u8 j = 0; j < mbol->order_count; j++) {
+            u32 oid = mbol->order_ids[j];
+            //if (oid > 43440){
+                //printf("some ridiculously large id value already\n");
+                //exit(1);
+            //}
             printf("#%u\t", mbol->order_ids[j]);
         }    
         printf("\n");
@@ -331,6 +336,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         new_mbo->level_count = (lowest_untouched_index - 0) + (old_mbo->level_count - highest_untouched_index - 1) + (partial_fill | modified_level);
 
         void* new_run = _data_start(new_mbo_raw);
+        printf("got new run\n");
 
         // CHANGING TO EXCLUSIVE
 
@@ -363,9 +369,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             else 
                 new_mbo->hi_bid_index = new_current_level;
 
+            printf("partial fill and insert\n");
             _partial_fill_and_insert_and_jump(old_mbo, modified_level_index, new_mbo, &new_current_level, &new_run, orders,  &remaining_quantity); 
         } 
 
+        printf("going through above levels\n");
 
         for (old_current_level = highest_untouched_index+1; old_current_level < old_mbo->level_count; old_current_level++) 
             _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &new_current_level, &new_run);
@@ -450,7 +458,16 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
     // much much later
     printf("actual size %u\n", actual_size);
-    bs_resize(mbo_bs, actual_size);
+    u8 resize_status = bs_resize(mbo_bs, actual_size);
+    if (resize_status){
+        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
+        printf("predicted size was %u\n", max_new_size);
+        printf("old mbo\n");
+        mbo_dump(old_mbo);
+        printf("new mbo\n");
+        mbo_dump(new_mbo);
+        exit(1);
+    }
     return unused;
 }
 

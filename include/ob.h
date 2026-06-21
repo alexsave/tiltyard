@@ -15,7 +15,9 @@ typedef struct MBOIndex {
     // from lowest byte of this whole structure
     // slightly easier parsing and updating if we consider it "offset from end of mbo levels array"
     // yeah lets do that
-    u16 byte_offset;
+    // we might be able to save more space in the ob thing by considering that it doesn't have to be byte offset, but like 4xbyte offset or something
+    // tough call but we'll leave it as this for now
+    u32 byte_offset;
     // i didnt want to do this, but massively helps with figuring out orders
     u16 quantity;
 } MBOIndex;
