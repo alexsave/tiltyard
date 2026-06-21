@@ -42,10 +42,13 @@ uint32_t fl_insert(FL* fl, void* data) {
         return MAX_U32;
     }
 
-    if (fl->sp == fl->capacity) {
+    // we're about to get id from fl->sp + 1
+    if (fl->sp + 1 >= fl->capacity) {
+        printf("doubling fl capacity\n");
         // quick check (does not fit in 32 bits anymore)
         if ((fl->capacity << 1) == 0) {
             printf("completely out of capacity. rearchitect freelist\n");
+            exit(1);
             // return some bogus
             return ((fl->capacity - 1) << 1) + 1;
         }
@@ -81,6 +84,12 @@ uint32_t fl_insert(FL* fl, void* data) {
     // this is ugly but - find a better way maybe with fixed width
     // maybe we have shared helper methods, but specific types of freelists use fixed width
     for (uint8_t i = 0; i < fl->type_size; i++) {
+        if(id>197855180){
+            printf("sp %u capacity %u\n", fl->sp, fl->capacity);
+            printf("id %u i %u destination %u\n", id, i, ((id*fl->type_size)+i));
+            printf("getting bytes %p\n", data);
+            exit(1);
+        }
         fl->data[(id*fl->type_size)+i] = *(uint8_t*)(data+i);
     }
 
