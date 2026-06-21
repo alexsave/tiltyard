@@ -12,3 +12,7 @@ make main| grep "\(NOW\|TRADE\)"
 
 is enough to get somethign that you can plot
 
+```
+make debug
+xcrun xctrace record --template "Time Profiler" --launch -- ./tiltyard 
+```
