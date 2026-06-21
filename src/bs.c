@@ -44,7 +44,8 @@ BS* bs_init(uint16_t metadata_capacity) {
 // size is actually an upper bound
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder){
     if (bs->md_start == bs->md_end) {
-        printf("md start is looped back to md end, double the capacity\n");
+        printf("md start is looped back to md end, double the capacity %u \n", bs->md_start);
+        printf("last size is %u\n", bs->metadata[(bs->md_end-1+bs->md_capacity)%bs->md_capacity].size);
         // there is no clean way to double the metadata capactiy
         // if we just ignore the current values of md_start and md_end, we lose good tracking on the store
         // if we try to move metdata 0 -- start to a new spot, we need to maintain two copies
