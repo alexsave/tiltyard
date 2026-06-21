@@ -11,6 +11,7 @@ void test_fuzz(){
     BS* mbo_bs = bs_init(1000);
     u32 mbo_handle = bs_reserve(mbo_bs, sizeof(MBO), 10, &mbo_address);
     ((MBO*)mbo_address)->level_count = 0;
+    ((MBO*)mbo_address)->hi_bid_index = MAX_U8;
 
     mbo_address = bs_get(mbo_bs, 0);
 
@@ -42,6 +43,7 @@ void test_ob() {
     BS* mbo_bs = bs_init(1000);
     u32 mbo_handle = bs_reserve(mbo_bs, sizeof(MBO), 10, &mbo_address);
     ((MBO*)mbo_address)->level_count = 0;
+    ((MBO*)mbo_address)->hi_bid_index = MAX_U8;
 
     mbo_address = bs_get(mbo_bs, 0);
 
