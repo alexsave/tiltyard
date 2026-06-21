@@ -1,11 +1,13 @@
 OBJDIR := out
 OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o fl.o bs.o sch.o client_zero.o cb.o client_one.o holder.o client.o ob.o)
 
+FLAGS := -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter
+
 out/%.o: src/%.c
-	gcc -c -Iinclude $< -o $@
+	gcc $(FLAGS) -c -Iinclude $< -o $@
 
 out/%.o: src/strategy/%.c
-	gcc -c -Iinclude $< -o $@
+	gcc $(FLAGS) -c -Iinclude $< -o $@
 
 $(OUTOBJS): | $(OBJDIR)
 
@@ -18,8 +20,8 @@ clean:
 
 # test relies on out
 test: clean $(OUTOBJS)
-	gcc -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
+	gcc $(FLAGS) -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
 
 main: clean $(OUTOBJS)
-	gcc -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
+	gcc $(FLAGS) -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 
