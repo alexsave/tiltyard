@@ -6,9 +6,46 @@
 #include <stdint.h>
 #include "rand.h"
 #include "pq.h"
+#include "types.h"
+#include "constants.h"
 
+void test_bug(){
+
+//5798218432512 scheduled in slow
+//2899115507713 scheduled in slow
+// kill event v
+//3019915657215 scheduled in slow
+    PQ* slow_bucket = pq_init();
+
+    pq_push(slow_bucket, 5798218432512);
+    pq_push(slow_bucket, 2899115507713);
+    pq_push(slow_bucket, 3019915657215);
+
+    // pq bucket is reversed
+
+    printf("%llu %llu %llu %llu\n", slow_bucket->heap[0] & E_MASK, slow_bucket->heap[1] & E_MASK, slow_bucket->heap[2] & E_MASK, slow_bucket->heap[3] & E_MASK);
+    u64 get = pq_pop(slow_bucket);
+    printf("%llu\n", get);
+    printf("%llu %llu %llu %llu\n", slow_bucket->heap[0] & E_MASK, slow_bucket->heap[1] & E_MASK, slow_bucket->heap[2] & E_MASK, slow_bucket->heap[3] & E_MASK);
+
+    get = pq_pop(slow_bucket);
+    printf("%llu\n", get);
+    printf("%llu %llu %llu %llu\n", slow_bucket->heap[0] & E_MASK, slow_bucket->heap[1] & E_MASK, slow_bucket->heap[2] & E_MASK, slow_bucket->heap[3] & E_MASK);
+
+    get = pq_pop(slow_bucket);
+    printf("%llu\n", get);
+    printf("%llu %llu %llu %llu\n", slow_bucket->heap[0] & E_MASK, slow_bucket->heap[1] & E_MASK, slow_bucket->heap[2] & E_MASK, slow_bucket->heap[3] & E_MASK);
+
+    get = pq_pop(slow_bucket);
+    printf("%llu\n", get);
+    printf("%llu %llu %llu %llu\n", slow_bucket->heap[0] & E_MASK, slow_bucket->heap[1] & E_MASK, slow_bucket->heap[2] & E_MASK, slow_bucket->heap[3] & E_MASK);
+    
+    
+}
 
 void test_pq() {
+
+    test_bug();
 
     // how do we use this again?
     // TDD: test driven development

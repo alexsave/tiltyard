@@ -73,6 +73,7 @@ uint64_t pq_peek(PQ* pq){
     return pq->heap[1];
 }
 
+// well this is bugged, explaining why we had multipel boot events
 uint64_t pq_pop(PQ* pq) {
     if (pq->current == 1)
         return 0;
@@ -87,11 +88,14 @@ uint64_t pq_pop(PQ* pq) {
     uint64_t last_copy = heap[pq->current];
 
     heap[pq->current] = 0;
+    // just to be safe, ya never know
+    //heap[1] = last_copy;
 
     while(1){
         uint32_t left = (run << 1);
         uint32_t right = left + 1;
 
+        printf("right %llu pq current %llu left  %llu\n", right, pq->current, left);
         if (right >= pq->current && left >= pq->current) {
             // gottem
             heap[run] = last_copy;
@@ -106,6 +110,8 @@ uint64_t pq_pop(PQ* pq) {
                 // swap
                 heap[run] = left_e;
                 heap[left] = last_copy;
+            } else {
+                heap[run] = last_copy;
             }
             // else we're still done anyways, as we have one child and its >= last_copy
             break;
@@ -117,8 +123,10 @@ uint64_t pq_pop(PQ* pq) {
         // normal case
         // it has to be the case that both the value at left & right is 
 
+        printf("right e %llu last copy %llu left e %llu\n", right_e, last_copy, left_e);
         // I think it's really just two, but I ned to test properly yes
         if (right_e > last_copy && left_e > last_copy) {
+            printf("where we need to be\n");
             // exactly where we need to be
             break;
         } else {
