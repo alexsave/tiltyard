@@ -21,8 +21,8 @@ typedef struct MBOIndex {
 } MBOIndex;
 
 typedef struct MBO {
-    u8 hi_bid_index;
-    u8 level_count;
+    u16 hi_bid_index;
+    u16 level_count;
     MBOIndex levels[];
     // after this is the actual order data
 } MBO;
