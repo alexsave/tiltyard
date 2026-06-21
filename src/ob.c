@@ -133,6 +133,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
 }
 
 void mbo_dump(void* mbo_raw) {
+    if(1) return;
     MBO* mbo = (MBO*)mbo_raw;
 
 
@@ -209,20 +210,19 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
     u32 actual_size = max_new_size;
 
     void* new_mbo_raw;
-    u32 unused = bs_reserve(mbo_bs, max_new_size, 10, &new_mbo_raw);
+    u32 unused = bs_reserve(mbo_bs, max_new_size, 3, &new_mbo_raw);
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
     void* old_mbo_raw = bs_get(mbo_bs, mbo_handle);
     MBO* old_mbo = (MBO*)old_mbo_raw;
 
-    // step one - calculate new mbo size
 
-    i8 hi_bid_index = old_mbo->hi_bid_index;
-    i8 lo_ask_index = hi_bid_index + 1;
+    i16 hi_bid_index = old_mbo->hi_bid_index;
+    i16 lo_ask_index = hi_bid_index + 1;
 
     u16 start_search;
-    i8 multiplier = 0;
+    i16 multiplier = 0;
     u16 bottom;
     u16 top;
 
@@ -411,7 +411,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
 
         void* new_run = _data_start(new_mbo_raw);
 
-
         if (price_level_exists) {
             for (u16 old_current_level = 0; old_current_level < new_mbo->level_count;) {
                 if (old_current_level == match_level) 
@@ -439,6 +438,14 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, quantity, order_id);
             }
         }
+    }
+
+    void* new_data_start = _data_start(new_mbo_raw);
+    if (new_mbo->level_count == 0) {
+        actual_size = new_data_start - new_mbo_raw;
+    } else {
+        void* mbol = new_mbo->levels[new_mbo->level_count-1].byte_offset + new_data_start;
+        actual_size = (mbol + _mbo_level_size(((MBOLevel*)mbol)->order_count)) - new_mbo_raw;
     }
 
     // much much later
