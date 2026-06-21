@@ -137,7 +137,6 @@ void last_after_first_tests(){
     //gonna copy a bit from the other test
     BS* bs = bs_init(1024);
 
-    void* first_store = bs->store;
     
     void* bs_address = 0;
 
