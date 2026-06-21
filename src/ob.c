@@ -162,7 +162,7 @@ void mbo_dump(void* mbo_raw) {
 
     for (u8 i = 0; i < mbo->level_count; i++) {
         MBOIndex mboi = mbo->levels[i];
-        u8 byte_offset = mboi.byte_offset;
+        u16 byte_offset = mboi.byte_offset;
         //printf("new mbol %p\n", (void*)(data_);
         MBOLevel* mbol = (MBOLevel*)(data_start + byte_offset);
         for(u8 j = 0; j < 8; j++){
@@ -172,6 +172,11 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
+        if (mbol->order_count > 100){
+            printf("too many orders for now, exiting\n");
+            exit(1);
+            
+        }
         for (u8 j = 0; j < mbol->order_count; j++) {
             printf("#%u\t", mbol->order_ids[j]);
         }    
@@ -416,6 +421,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
             u8 found = 0;
 
             for (u8 old_current_level = 0; old_current_level < old_mbo->level_count; old_current_level++) {
+                
                 MBOIndex mboi = old_mbo->levels[old_current_level];
 
                 if (found == 0 && mboi.price > price) {
@@ -425,8 +431,9 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
                 _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &new_current_level, &new_run);
             }
 
-            if(found == 0)
+            if(found == 0){
                 _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, quantity, order_id);
+            }
         }
     }
 
