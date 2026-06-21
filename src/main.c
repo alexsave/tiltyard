@@ -56,7 +56,7 @@ typedef struct ClientSettings {
 
 
 int main(int argc, char* argv[]){
-    uint64_t seed = 603;
+    uint64_t seed = 2303;
     uint64_t* rand = rand_init(seed);
     rand_next(rand);
 
@@ -95,28 +95,29 @@ int main(int argc, char* argv[]){
     // two fake orders just to make thigns fun
 
     void* mbo_address = 0;
-    BS* mbo_bs = bs_init(1000);
-    u32 mbo_handle = bs_reserve(mbo_bs, sizeof(MBO), 1, &mbo_address);
-    u32 last_mbo;
+    //173002s
+    //173002s
+    //176077s
+    //179352s
+    // nvm we get 3000 more seconds
+    // not too shabby
+    // wonder how big these blobs are getting
+    // why does this do nothing
+    BS* mbo_bs = bs_init(8192);
+
+    // 2 is correct here
+    // server will read it to generate the second MBO, and this will be sent to first client that connects
+    // but that's it
+    // so complex
+    u32 last_mbo = bs_reserve(mbo_bs, sizeof(MBO), 2, &mbo_address);
     ((MBO*)mbo_address)->level_count = 0;
-    last_mbo = mbo_handle;
+    ((MBO*)mbo_address)->hi_bid_index = MAX_U16;
+
 
     /*void* mbp_address = 0;
     BS* mbp_bs = bs_init(10000);
     u32 mbp_handle = bs_reserve(mbp_bs, sizeof(MBP), 1, &mbp_address);
     ((MBP*)mbp_address)->level_count = 0;*/
-    
-
-
-    // this is just one row btw
-
-
-    // this is how we write to order book snapshot
-
-
-
-
-
 
     // next step is to get all the awake times
     // and yes this will immediately schedule like 10M events
@@ -284,8 +285,19 @@ int main(int argc, char* argv[]){
                         !(client_settings[in->client_id].ws);
                 }  else {
                     printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
+                    
+                    // mbo_dump + used to create next snapshot
+                    u16 ref_count = 2;
 
-                    last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs);
+                    // todo create l3 list later
+                    for (u32 ci = 0; ci < ho->num_clients; ci++){
+                        if(client_settings[ci].ws) {
+                            ref_count++;
+                        }
+                    }
+    
+
+                    last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
                     mbo_dump(bs_get(mbo_bs, last_mbo));
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }

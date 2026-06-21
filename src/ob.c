@@ -197,7 +197,7 @@ void mbo_dump(void* mbo_raw) {
 // will need a change to bs
 // but not that hard, just need to update bs->metadata[(bs->md_end-1)%bs->md_capacity].size = size;
 
-u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
+u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count) {
     Order* in = (Order*)fl_get(orders, order_id);
     u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
@@ -210,7 +210,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs) {
     u32 actual_size = max_new_size;
 
     void* new_mbo_raw;
-    u32 unused = bs_reserve(mbo_bs, max_new_size, 3, &new_mbo_raw);
+    u32 unused = bs_reserve(mbo_bs, max_new_size, ref_count, &new_mbo_raw);
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
