@@ -5,6 +5,7 @@
 #include "order.h"
 #include "bs.h"
 #include "fl.h"
+#include "cb.h"
 
 static const u8 REJECT = 1;
 
@@ -46,7 +47,7 @@ typedef struct MBP {
     MBPLevel levels[];
 } MBP;
 
-u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count);
+u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count, CB* fills, u32* partial_fill_id, u32* partial_fill_q);
 void mbo_dump(void* mbo_raw);
 
 #endif

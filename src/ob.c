@@ -156,9 +156,8 @@ void _insert_level_and_jump(MBO* new_mbo, u16* new_current_level, void** new_run
 }
 
 // does a lot but it's kinda coherent tho
-void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, MBO* new_mbo, u16* new_current_level, void** new_run, FL* orders, u32* remaining_quantity) {
+void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, MBO* new_mbo, u16* new_current_level, void** new_run, FL* orders, u32* remaining_quantity, CB* fills, u32* partial_fill_id, u32* partial_fill_q) {
     // a whole bunch of bullshit
-     
 
     // the scenario where we partially fill a level
     // even worse, maybe partially fill an order
@@ -184,11 +183,16 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
         if (order_quantity > (*remaining_quantity)) {
             // modify order directly, maybe send partial fill notification
             prev_order->quantity -= *remaining_quantity;
+            // mark partial fill
+            *partial_fill_id = prev_order_id;
+            *partial_fill_q = *remaining_quantity;
             break;
         } else {
             // fill order entirely
             remaining_orders_on_level--;
             (*remaining_quantity) = (*remaining_quantity) - order_quantity;
+            // complete fill
+            cb_queue(fills, prev_order_id);
         }
     }
 
@@ -211,7 +215,9 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
 // will need a change to bs
 // but not that hard, just need to update bs->metadata[(bs->md_end-1)%bs->md_capacity].size = size;
 
-u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count) {
+// fill holder for the trades we make
+// it's not up to this OB modifier to handle fills just to log them really
+u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count, CB* fills, u32* partial_fill_id, u32* partial_fill_q) {
     Order* in = (Order*)fl_get(orders, order_id);
     u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
@@ -304,6 +310,19 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 untouched_above = current_level;
             }
 
+            if (level_quantity <= remaining_quantity) {
+                // better yet we just do it here
+                void* old_run = (_data_start((void*)old_mbo) + mboi.byte_offset);
+
+                MBOLevel* mod_level = (MBOLevel*)old_run;
+                u32 remaining_orders_on_level = mod_level->order_count;
+                for (u16 i = 0; i < mod_level->order_count; i++) {
+                    u32 prev_order_id = mod_level->order_ids[i];
+                    cb_queue(fills, prev_order_id);
+                }
+                
+            }
+
             if (level_quantity > remaining_quantity) {
                 // this order will be entirely filled on this level, making this lowest ask/highets bid
 
@@ -313,7 +332,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
                 break;
             } else if(level_quantity == remaining_quantity) {
-                printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
+                //printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
 
                 //printf("limit filled exactly at this level\n");
                 remaining_quantity -= level_quantity;
@@ -323,10 +342,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
                 break;
             } else {
-                printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
+                //printf("TRADE: %u %u %u\n", direction, mboi.price, level_quantity);
 
                 //printf("takinga  bit of quantity\n");
                 remaining_quantity -= level_quantity;
+
             }
 
             if (current_level == top) {
@@ -359,10 +379,29 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         u16 new_current_level = old_current_level;
 
+        // before we do this, for all three cases we need to completely copy all orders from wiped levels into "fills"
+        // exact level wipe does this, but does not do the partial thing
+        // partial fill does this for all levels below where we add the new bid
+        // modified fill does this for for all levele below, adn aslo the partial thing
+
+        // I believe the exact formula is...
+    
+        // lets split it up for now
+
+        // fuck it i think it's the same for all three scenarios
+        // anything between lowest_untouched and highest_untouched will be wiped out, thus filled
+        // we insert no new rows, thus all rows from lowest_untouched to highest_untouched must've been wiped
+        // outside of those, they remain the same
+        for (u16 wipe_level = lowest_untouched_index; wipe_level <= highest_untouched_index; wipe_level++){
+            // do the partial fill thing
+        }
+
+
         if (exact_level_wipe) {
             new_mbo->hi_bid_index = new_current_level - 1;
 
         } else if (partial_fill) {
+            // the INCOMING order is partially filled, thus left as a standing order
 
             if (direction == 1) {
                 //buy, we just updated highest bid
@@ -383,7 +422,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 new_mbo->hi_bid_index = new_current_level;
 
             //printf("partial fill and insert\n");
-            _partial_fill_and_insert_and_jump(old_mbo, modified_level_index, new_mbo, &new_current_level, &new_run, orders,  &remaining_quantity); 
+            _partial_fill_and_insert_and_jump(old_mbo, modified_level_index, new_mbo, &new_current_level, &new_run, orders,  &remaining_quantity, fills, partial_fill_id, partial_fill_q); 
         } 
 
         //printf("going through above levels\n");
@@ -444,7 +483,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             u8 found = 0;
 
             for (u16 old_current_level = 0; old_current_level < old_mbo->level_count; old_current_level++) {
-                
+
                 MBOIndex mboi = old_mbo->levels[old_current_level];
 
                 if (found == 0 && mboi.price > price) {

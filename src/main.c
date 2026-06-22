@@ -91,17 +91,14 @@ int main(int argc, char* argv[]){
 
     // two fake orders just to make thigns fun
 
+    // how much could a     
+
+    // to keep track of fills, and the case where an incoming fill only partially fills existing order
+    u32 partial_fill_id = MAX_U32;
+    u32 partial_fill_q = 0;
+    CB* fills = cb_init();
+
     void* mbo_address = 0;
-    //173002s
-    //173002s
-    //176077s
-    //179352s
-    //176077sI//
-    //~190170s 
-    // nvm we get 3000 more seconds
-    // not too shabby
-    // wonder how big these blobs are getting
-    // why does this do nothing
     BS* mbo_bs = bs_init(8192);
 
     // 2 is correct here
@@ -165,7 +162,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, 30*24*60*60*S_TO_NS+1);
+    sch_schedule(sch, kill_event, (24*60*60 + 10) *S_TO_NS);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -197,7 +194,7 @@ int main(int argc, char* argv[]){
 
         uint64_t now_ns = sch_now_ns(sch);
         //printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
-        printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
+        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
         log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
@@ -311,9 +308,35 @@ int main(int argc, char* argv[]){
                         //exit(1);
                     //}
 
-                    last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
+                    partial_fill_id = MAX_U32;
+
+                    last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
+
+                    // ok now we have fills and partial_id maybe
+                    // partial id will be filled last by definiton
+                    while (!cb_is_empty(fills)){
+                        u32 filled_order_id = cb_deque(fills);
+                        // its filled, we dont need it anymore I think
+                        // we could probably release, but it's confusing right now
+                        Order* order = (Order*)fl_get(orders, filled_order_id);
+
+                        printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
+                        // lets at least log it more standardly
+                        
+                    }
+
+                    if (partial_fill_id != MAX_U32) {
+                        Order* order = (Order*)fl_get(orders, partial_fill_id);
+
+                        // remaining quantity? quantity is a bit tricky here
+                        printf("TRADE %u %u %u %u %llu PARTIAL\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, partial_fill_q, partial_fill_id, now_ns);
+
+                    }
+
+                    //
 
                     bs_get(mbo_bs, prev_last_mbo);
+                    mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
 
                     //bit hacky but ensures we can get the first snpashot into processing
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
