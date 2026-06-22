@@ -18,7 +18,7 @@ typedef struct MBOIndex {
     // tough call but we'll leave it as this for now
     u32 byte_offset;
     // i didnt want to do this, but massively helps with figuring out orders
-    u16 quantity;
+    u32 quantity;
 } MBOIndex;
 
 typedef struct MBO {

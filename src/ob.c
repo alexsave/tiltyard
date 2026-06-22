@@ -67,11 +67,6 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
-        if (mbol->order_count > 250){
-            printf("too many orders for now, exiting\n");
-            exit(1);
-            
-        }
         for (u8 j = 0; j < mbol->order_count; j++) {
             u32 oid = mbol->order_ids[j];
             //if (oid > 43440){
@@ -95,7 +90,7 @@ u32 _mbo_level_size(u16 order_count) {
     return sizeof(MBOLevel) + order_count * sizeof(u32);
 }
 
-void _write_level(MBO* new_mbo, u16 new_current_level, u16 price, u16 quantity, void* new_run){
+void _write_level(MBO* new_mbo, u16 new_current_level, u16 price, u32 quantity, void* new_run){
     void* new_data_start = _data_start(new_mbo);
 
     new_mbo->levels[new_current_level].price = price;
@@ -119,7 +114,7 @@ void _copy_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16
     *new_current_level = *new_current_level + 1;
 }
 
-void _append_to_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16* new_current_level, void** new_run, u32 order_id, u16 quantity){
+void _append_to_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16* new_current_level, void** new_run, u32 order_id, u32 quantity){
     // first copy the level
     // then go back and do this, then finally jump properly
 
@@ -144,7 +139,7 @@ void _append_to_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo
 }
 
 // not reliant on old at all, this is a new row
-void _insert_level_and_jump(MBO* new_mbo, u16* new_current_level, void** new_run, u16 price, u16 quantity, u32 order_id){
+void _insert_level_and_jump(MBO* new_mbo, u16* new_current_level, void** new_run, u16 price, u32 quantity, u32 order_id){
 
     // this is where we need to insert the new limit order
     //printf("setting level data\n");
@@ -161,7 +156,7 @@ void _insert_level_and_jump(MBO* new_mbo, u16* new_current_level, void** new_run
 }
 
 // does a lot but it's kinda coherent tho
-void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, MBO* new_mbo, u16* new_current_level, void** new_run, FL* orders, u16* remaining_quantity) {
+void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, MBO* new_mbo, u16* new_current_level, void** new_run, FL* orders, u32* remaining_quantity) {
     // a whole bunch of bullshit
      
 
@@ -185,7 +180,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
         u32 prev_order_id = mod_level->order_ids[i];
         Order* prev_order = (Order*)fl_get(orders, prev_order_id);
 
-        u16 order_quantity = prev_order->quantity;
+        u32 order_quantity = prev_order->quantity;
         if (order_quantity > (*remaining_quantity)) {
             // modify order directly, maybe send partial fill notification
             prev_order->quantity -= *remaining_quantity;
@@ -220,7 +215,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     Order* in = (Order*)fl_get(orders, order_id);
     u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
-    u16 quantity = in->quantity;
+    u32 quantity = in->quantity;
 
     // step one - calculate max possible new mbo size
     u32 old_size = mbo_bs->metadata[mbo_handle].size;
@@ -271,7 +266,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         //printf("starting search from %u and going %u\n", start_search, multiplier);
         // yes it is marketable, at least part of it can be matched immediately
 
-        u16 remaining_quantity = quantity;
+        u32 remaining_quantity = quantity;
 
         // EXCLUSIVE NOW, everything outside of these is untouched
         u16 untouched_below = start_search;
@@ -303,7 +298,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 break;
             }
 
-            u16 level_quantity = mboi.quantity;
+            u32 level_quantity = mboi.quantity;
 
             if (level_quantity >= remaining_quantity){
                 untouched_above = current_level;
@@ -314,7 +309,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
                 modified_level = 1;
                 modified_level_index = current_level;
-                printf("order will partially eat into level %u with remaining quantity %u vs level quantity %u\n", mboi.price, remaining_quantity, level_quantity);
+                //printf("order will partially eat into level %u with remaining quantity %u vs level quantity %u\n", mboi.price, remaining_quantity, level_quantity);
 
                 break;
             } else if(level_quantity == remaining_quantity) {
