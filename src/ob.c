@@ -67,7 +67,7 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
-        for (u8 j = 0; j < mbol->order_count; j++) {
+        for (u16 j = 0; j < mbol->order_count; j++) {
             u32 oid = mbol->order_ids[j];
             //if (oid > 43440){
                 //printf("some ridiculously large id value already\n");
@@ -174,7 +174,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
 
     u32 remaining_orders_on_level = mod_level->order_count;
 
-    u8 i = 0;
+    u16 i = 0;
     for (; i < mod_level->order_count; i++) {
         //printf("going throuh orders %u\n", i);
         u32 prev_order_id = mod_level->order_ids[i];
@@ -194,7 +194,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
 
     MBOLevel* init = ((MBOLevel*)(*new_run));
     init->order_count = remaining_orders_on_level;
-    for (u8 j = i; j < mod_level->order_count; j++) {
+    for (u16 j = i; j < mod_level->order_count; j++) {
         ////printf("going throuh orders %u\n", j);
         init->order_ids[j-i] = mod_level->order_ids[j];
     }
