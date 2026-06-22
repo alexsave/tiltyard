@@ -26,6 +26,7 @@ void pq_push(PQ* pq, uint64_t event) {
     uint32_t max_32 = ((((uint32_t)1 << 31) - 1) << 1) + 1;
     if (pq->current == max_32) {
         printf("Current has hit max value, upgrade to uint64 now.\n");
+        exit(1);
         return;
     }
 

@@ -26,6 +26,7 @@ void cb_queue(CB* cb, u32 value) {
     } else if (cb->start == cb->end) {
         if (cb->capacity << 1 == 0) {
             printf("completely out of circular buffer space, cannot even double\n");
+            exit(1);
             return;
         }
 

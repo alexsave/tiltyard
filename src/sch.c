@@ -36,6 +36,7 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
     if (max_ns - now_ns < delta_ns) {
         // out of time bud
         printf("Out of time bud, let's wrap it up\n");
+        exit(1);
         return;
     }
 
@@ -207,11 +208,6 @@ uint64_t sch_pop(SCH* sch) {
 
         sch_schedule(sch, next, max_delta);
     } 
-
-    if ((next & E_MASK) == ((CONTROL_TYPE << PARAM_BITS) | CONTROL_PARAM_KILL)){
-        printf("kill event\n");
-        exit(1);
-    }
 
 
     // technically nanoseconds into the bucket, possibly unneeded
