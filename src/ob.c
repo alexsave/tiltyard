@@ -112,7 +112,7 @@ void _copy_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16
 
     void* old_run = (_data_start((void*)old_mbo) + mboi.byte_offset);
 
-    u8 old_size = _mbo_level_size((((MBOLevel*)old_run)->order_count));
+    u16 old_size = _mbo_level_size((((MBOLevel*)old_run)->order_count));
     memcpy(*new_run, old_run, old_size);
     *new_run = (*new_run) + old_size;
 
