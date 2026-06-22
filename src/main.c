@@ -55,7 +55,6 @@ typedef struct ClientSettings {
 } ClientSettings;
 
 
-
 int main(int argc, char* argv[]){
     uint64_t seed = 603;
     uint64_t* rand = rand_init(seed);
@@ -66,8 +65,6 @@ int main(int argc, char* argv[]){
 
     SCH* sch = sch_init(rand);
 
-    //printf("size mbp %lu\n", sizeof(MBP));
-
     FL* orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
 
     TypeMetadata* tm = get_types();
@@ -77,10 +74,9 @@ int main(int argc, char* argv[]){
 
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
-    //printf("%d\n", tm->co_index);
     // now we can do
     // this shoudl definitely be done by main
-    client_allocations[tm->cz_index] = 1;
+    client_allocations[tm->cz_index] = 0;
     client_allocations[tm->co_index] = 1;
 
     //printf("initialzing holder\n");
@@ -169,7 +165,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, 7*24*60*60*S_TO_NS+1);
+    sch_schedule(sch, kill_event, 30*24*60*60*S_TO_NS+1);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -310,11 +306,12 @@ int main(int argc, char* argv[]){
                     }
     
                     u32 prev_last_mbo = last_mbo;
+                    //if(exec_order_id > 2000000){
+                        //mbo_dump(mbo);
+                        //exit(1);
+                    //}
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count);
-                    //if(exec_order_id > 146){
-                        //mbo_dump(mbo);
-                    //}
 
                     bs_get(mbo_bs, prev_last_mbo);
 
@@ -512,13 +509,14 @@ int main(int argc, char* argv[]){
 
             } else if (control_id == CONTROL_PARAM_KILL) {
                 printf("kill event triggered\n");
-                exit(1);
                 // gg 
                 break;
             }
         } 
 
     }
+
+    mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
 
     sch_free(sch);
     rand_free(rand);
