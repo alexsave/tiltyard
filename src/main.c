@@ -28,6 +28,34 @@ void log_full(uint64_t raw) {
             raw & PARAM_MASK);
 }
 
+// $$, initial wake, processing time, latency
+typedef struct ClientSettings {
+    u8 ws;
+    u32 buying_power;
+    u32 shares;
+} ClientSettings;
+
+void transfer(Order* resting_order, Order* new_order, ClientSettings* client_settings){
+    // ok transfer $$$ 
+    u32 cost = resting_order->price * resting_order->quantity;
+
+    u32 taker = new_order->client_id;
+    u32 maker = resting_order->client_id;
+
+    // finally some accountability
+    if ((new_order->flags >> BUY_DIRECTION_BIT) & 1){ 
+        //client_settings[taker].buying_power -= cost;
+        client_settings[maker].buying_power += cost;
+        //client_settings[taker].shares += resting_order->quantity;
+        client_settings[maker].shares -= resting_order->quantity;
+    } else {
+        //client_settings[taker].buying_power += cost;
+        client_settings[maker].buying_power -= cost;
+        //client_settings[taker].shares -= resting_order->quantity;
+        client_settings[maker].shares += resting_order->quantity;
+    }   
+}
+
 // the ordering of these actually matters for tie breakers
 static const u32 HW_TO_SW_ID = MAX_PARAM - 0;
 static const u32 EXEC_START_ID = MAX_PARAM - 1;
@@ -49,10 +77,6 @@ typedef struct Response {
     u8 status;
 } Response;
 
-// $$, initial wake, processing time, latency
-typedef struct ClientSettings {
-    u8 ws;
-} ClientSettings;
 
 
 int main(int argc, char* argv[]){
@@ -79,19 +103,14 @@ int main(int argc, char* argv[]){
     client_allocations[tm->cz_index] = 0;
     client_allocations[tm->co_index] = 1;
 
-    //printf("initialzing holder\n");
     Holder* ho = holder_init(tm, client_allocations);
-    //printf("done initialzing holder\n");
-
+      
     ClientSettings* client_settings = calloc(ho->num_clients, sizeof(ClientSettings));
+    // just a little treat to get them started
+    client_settings[0].buying_power = 100000;
+    client_settings[0].shares = 100;
+    // ideally we also get this from clients
 
-    // let's fucking roll
-
-    // initial order book - two opposing orders across $100
-
-    // two fake orders just to make thigns fun
-
-    // how much could a     
 
     // to keep track of fills, and the case where an incoming fill only partially fills existing order
     u32 partial_fill_id = MAX_U32;
@@ -125,6 +144,7 @@ int main(int argc, char* argv[]){
     // shoudl be pretty easy to veirfy
 
     printf("getting in it times\n");
+    // maybe get all client init config here?
     u64* inits = holder_get_init_ns(ho);
 
     for(u32 i = 0; i < ho->num_clients; i++) {
@@ -162,7 +182,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, (24*60*60 + 10) *S_TO_NS);
+    sch_schedule(sch, kill_event, (25*60*60) *S_TO_NS);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -195,7 +215,7 @@ int main(int argc, char* argv[]){
         uint64_t now_ns = sch_now_ns(sch);
         //printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
         //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
-        log_full(next);
+        //log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
@@ -212,7 +232,7 @@ int main(int argc, char* argv[]){
 
             // order arrives to server
             if (order_id < MIN_RESERVED_PACKET) {
-                printf("order %llu arrives at server\n", order_id);
+                //printf("order %llu arrives at server\n", order_id);
                 cb_queue(hw_queue, order_id);
 
                 u64 HW_TO_SW_DELAY = 10000;
@@ -224,7 +244,7 @@ int main(int argc, char* argv[]){
                     continue;
                 }
                 u32 moving_order = cb_deque(hw_queue); // handle zero case
-                printf("hw to sw move requested for order %u\n", moving_order);
+                //printf("hw to sw move requested for order %u\n", moving_order);
 
                 // If it's not empty, someone has already scheduled an exec_start_id
                 if (cb_is_empty(sw_queue)) {
@@ -250,7 +270,7 @@ int main(int argc, char* argv[]){
                     continue;
                 }
 
-                printf("exec started\n");
+                //printf("exec started\n");
 
                 server->executing = 1;
 
@@ -264,34 +284,72 @@ int main(int argc, char* argv[]){
                     continue;
                 }
 
+
                 u32 exec_order_id = cb_deque(sw_queue);
-                printf("exec finished on order %u\n", exec_order_id);
+                //printf("exec finished on order %u\n", exec_order_id);
 
                 Order* in = (Order*)fl_get(orders, exec_order_id);
 
-                // for now we'll just handle socket connections
-                if (in->flags & (1 << WS_BIT)) {
-                    //something like
-                    // toggle connection
-                    client_settings[in->client_id].ws = !(client_settings[in->client_id].ws);
-                    // feels hacky but
-                    // this will get the last snapshot, hence increasing refcount
-                    if(client_settings[in->client_id].ws)
-                        bs_bump_refs(mbo_bs, last_mbo);
-                }  
+                u32 agro = in->client_id;
 
-                if((in->quantity == 0) && (!(in->flags & (1<<WS_BIT)))){
-                    // it will be rejected but they need to read again
+                u8 will_modify_ob = 0;
+
+                u32 before_quantity = in->quantity;
+                u32 in_cost = before_quantity * in->price;
+                u8 is_buy = (in->flags >> BUY_DIRECTION_BIT) & 1;
+
+                u8 has_bp = client_settings[agro].buying_power >= in_cost;
+                u8 has_shares = client_settings[agro].shares >= before_quantity;
+                u8 is_valid_quantity = in->quantity > 0;
+                u8 is_toggle_ws = (in->flags & (1 << WS_BIT));
+
+                
+                
+
+                // lets thingk
+                /*
+                   000 what the fuck is this guy even doing - bump refs and return current
+                   001 fair enough, he just want to connect - bump refs and connect and return current
+                   010 broke boy reject this - bump refs and return current
+                   011 broke boy disconnect
+                   100 invalid reqest
+                   101 invalid reqest and toggle
+                   110 ok let him trade
+                   111 trade and disconnect?
+
+                 */
+
+                // as all possibilities need some response, everything except valid trade will need to bump refs
+
+                u8 will_modify;
+                if(is_buy)
+                    will_modify = has_bp & is_valid_quantity;
+                else 
+                    will_modify = has_shares & is_valid_quantity;
+
+                if (!will_modify)
                     bs_bump_refs(mbo_bs, last_mbo);
-                }
 
-                printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, in->client_id);
+                // for now we'll just handle socket connections
+                if (is_toggle_ws) 
+                    client_settings[agro].ws = !(client_settings[agro].ws);
+
+                printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
+                if(is_buy && !has_bp) 
+                    printf("unfortunately hes a broke boy, rejected $%u\n", client_settings[agro].buying_power);
+
+                if(!is_buy && !has_shares) 
+                    printf("unfortunately he does not have enough shares, rejected %u\n", client_settings[agro].shares);
+
+                //printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
+
+
                 void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
-                //printf("in main, mbo at %p\n", mbo);
+
                 // calculate ref count AFTER setting ws lol
-                if(in->quantity > 0 && !(in->flags & (1<<WS_BIT))) {
+                if (will_modify) {
                     //printf("operating on id %u\n", exec_order_id);
-                    
+
                     // mbo_dump + used to create next snapshot
                     u16 ref_count = 1;
 
@@ -301,16 +359,71 @@ int main(int argc, char* argv[]){
                             ref_count++;
                         }
                     }
-    
+
                     u32 prev_last_mbo = last_mbo;
                     //if(exec_order_id > 2000000){
-                        //mbo_dump(mbo);
-                        //exit(1);
+                    //mbo_dump(mbo);
+                    //exit(1);
                     //}
+
+
+
+                    // ok hold on
+                    // making a limit order takes from a clients buying power. As if they already purchased it
+                    // if it gets filled at a better order... then what?
+                    // you have $1000
+                    // lets say you make a bid for $600, quantity 1
+                    // buying power is down to $400
+                    // lowest ask is at $500 for quantity 1 
+                    // buyer definitely gets one share
+                    // $500 of that $600 buying power goes to the seller
+                    // $100 goes back to buyer?
+                    // seems right
+                    // but that's only on full fill of our order
+
+                    // maybe we leave a standing order
+                    // bid for $300
+                    // $300 is thus tied up
+                    // but what if you make a bid for $600 quantity 2
+                    // $500 level only has one
+                    // we correctly calculate the $500 is filled, but then leaves a $600 limit order
+                    // $500 filling sends $500 to the seller and $100 of buying power back to buyer
+                    // but $600 is still tied up with the resting order
+                    // $1000 - $600*2
+                    // then +$100
+                    // leaving -$100
 
                     partial_fill_id = MAX_U32;
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
+
+                    // check exec_order_id to see if we had a partial fill
+
+                    if (in->quantity < before_quantity) {
+                        // the aggressor order was partially filled and is now standing order, of quantity (before_quantity - in->quantity)
+                        // interesting but does not actually chagne buying power
+                        // the price of this remainging thing matches the original requested price and will be returned by a subsequent aggressor
+                    } else if(cb_is_empty(fills) && (partial_fill_id == MAX_U32)) {
+                        // no fills, it was on the nonmarketable side
+                        // order is resting
+                        // also 
+                        // 
+                    } else {
+                    }
+
+                    
+                    
+                    if (is_buy) {
+                        client_settings[agro].buying_power -= in_cost;
+                    } else {
+                        // long sales only for now
+                        client_settings[agro].shares -= before_quantity;
+                        //client_settings[taker].buying_power -= cost;
+                    }
+
+                    // now that it went through we need to update the buying power of the dude
+                    //client_settings[taker].buying_power -= in_cost;
+                    
 
                     // ok now we have fills and partial_id maybe
                     // partial id will be filled last by definiton
@@ -321,15 +434,34 @@ int main(int argc, char* argv[]){
                         Order* order = (Order*)fl_get(orders, filled_order_id);
 
                         printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
-                        // lets at least log it more standardly
-                        
+                        transfer(order, in, client_settings);
                     }
 
                     if (partial_fill_id != MAX_U32) {
+                        // todo might be cleaner to just replace with an identical order and return the old one modified as if it were that "partial_fill_q"
                         Order* order = (Order*)fl_get(orders, partial_fill_id);
 
                         // remaining quantity? quantity is a bit tricky here
                         printf("TRADE %u %u %u %u %llu PARTIAL\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, partial_fill_q, partial_fill_id, now_ns);
+
+                        // ok transfer $$$
+                        u32 cost = order->price * partial_fill_q;
+
+                        u32 taker = in->client_id;
+                        u32 maker = order->client_id;
+
+                        // finally some accountability
+                        if ((in->flags >> BUY_DIRECTION_BIT) & 1){
+                            //client_settings[taker].buying_power -= cost;
+                            client_settings[maker].buying_power += cost;
+                            client_settings[taker].shares += partial_fill_q;
+                            client_settings[maker].shares -= partial_fill_q;
+                        } else {
+                            //client_settings[taker].buying_power += cost;
+                            client_settings[maker].buying_power -= cost;
+                            client_settings[taker].shares -= partial_fill_q;
+                            client_settings[maker].shares += partial_fill_q;
+                        }
 
                     }
 
@@ -342,7 +474,7 @@ int main(int argc, char* argv[]){
                     //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
                 }
 
-                if ((in->quantity == 0) && (!(in->flags & (1<<WS_BIT)))/*status == REJECT*/) {
+                if (!will_modify){
                     // only send reject to that one client, later
                     Response r = {.client_id = in->client_id, .snapshot_id = last_mbo, .status=1};
                     u32 response_id = fl_insert(responses, &r);
@@ -371,9 +503,6 @@ int main(int argc, char* argv[]){
                 }
 
 
-
-
-
                 /*
                    if (need to convert stops)
                    schedule EXEC_TO_SW_ID eevent
@@ -392,8 +521,6 @@ int main(int argc, char* argv[]){
                     u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
                     sch_schedule(sch, socket_event, EXEC_TIME);
                 }
-
-
 
 
             } else if (order_id == EXEC_TO_SW_ID) {
@@ -417,7 +544,7 @@ int main(int argc, char* argv[]){
 
             }
         } else if (type == CLIENT_IN_TYPE) {
-            printf("client in type\n");
+            //printf("client in type\n");
 
             //print
 
@@ -437,12 +564,12 @@ int main(int argc, char* argv[]){
 
             // idk should we bump refs on error then send it anyways?
             //void* mbo_raw
-                //if (status != 1){
+            //if (status != 1){
 
             //printf("getting mbo raw\n");
             void* mbo_raw = bs_get(mbo_bs, snapshot_id);
             //printf("got mbo raw\n");
-                //}
+            //}
 
             Order tmp = {};
 
@@ -478,7 +605,7 @@ int main(int argc, char* argv[]){
             //printf("client in type done\n");
 
         } else if (type == CLIENT_OUT_TYPE) {
-            printf("client out type\n");
+            //printf("client out type\n");
 
             u32 order_id = params;
             //Order order = *(Order*)fl_get(orders, order_id);
@@ -498,7 +625,7 @@ int main(int argc, char* argv[]){
 
             sch_schedule(sch, out_event, random_jitter);
         } else if (type == CONTROL_TYPE) {
-            printf("control type\n");
+            //printf("control type\n");
             // it will go here
             // and this will look a bit like the server event type
 
@@ -538,6 +665,8 @@ int main(int argc, char* argv[]){
         } 
 
     }
+
+    printf("client 0 $%u and shares %u\n", client_settings[0].buying_power, client_settings[0].shares);
 
     mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
 
