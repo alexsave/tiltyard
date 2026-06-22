@@ -26,13 +26,21 @@ void mbo_dump(void* mbo_raw) {
 
     printf("===MBO DUMP===\n");
     printf("MBO with %u levels and hi bid index %u\n", mbo->level_count, mbo->hi_bid_index);
+    u32 last_byte_offset = MAX_U16;
     for (u16 i = 0; i < mbo->level_count; i++) {
         MBOIndex mboi = mbo->levels[i];
+        
         if (i == mbo->hi_bid_index)
             printf("[");
         else 
             printf(" ");
         printf("level\t%uc with quantity\t%u at offset\t%u", mboi.price, mboi.quantity, mboi.byte_offset);
+        if (mboi.byte_offset == last_byte_offset){
+            printf("consecutive level byte offsets were equal, impossible\n");
+            
+            //exit(1);
+        }
+        last_byte_offset = mboi.byte_offset;
         if (i == mbo->hi_bid_index)
             printf("] - highest bid\n");
         else 
@@ -59,7 +67,7 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of mbol %p\n", (data_start+byte_offset));
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
-        if (mbol->order_count > 10){
+        if (mbol->order_count > 250){
             printf("too many orders for now, exiting\n");
             exit(1);
             
@@ -302,10 +310,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             }
 
             if (level_quantity > remaining_quantity) {
-                // this order will be entirely filled on this level, making this lowest ask
+                // this order will be entirely filled on this level, making this lowest ask/highets bid
 
                 modified_level = 1;
                 modified_level_index = current_level;
+                printf("order will partially eat into level %u with remaining quantity %u vs level quantity %u\n", mboi.price, remaining_quantity, level_quantity);
 
                 break;
             } else if(level_quantity == remaining_quantity) {
@@ -359,8 +368,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             new_mbo->hi_bid_index = new_current_level - 1;
 
         } else if (partial_fill) {
-            // this is where we need to insert the new limit order
-            _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, remaining_quantity, order_id);
 
             if (direction == 1) {
                 //buy, we just updated highest bid
@@ -369,6 +376,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 //sell, we just updated lowest ask
                 new_mbo->hi_bid_index = new_current_level - 1;
             }
+            // this is where we need to insert the new limit order
+            _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, remaining_quantity, order_id);
 
             Order* current_order = (Order*)fl_get(orders, order_id);
             current_order->quantity = remaining_quantity;
@@ -466,11 +475,10 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
 
     // much much later
-    //printf("actual size %u\n", actual_size);
     u8 resize_status = bs_resize(mbo_bs, actual_size);
     if (resize_status){
         u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
-        printf("predicted size was %u\n", max_new_size);
+        printf("predicted size was %u, then requested to resize to %U\n", max_new_size, actual_size);
         printf("old mbo\n");
         mbo_dump(old_mbo);
         printf("new mbo\n");
