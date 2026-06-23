@@ -20,8 +20,10 @@
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
     ServerContext* sc = malloc(sizeof(ServerContext));
 
-    sc->ho = holder_init(tm, client_allocations);
-    sc->client_settings = calloc(sc->ho->num_clients, sizeof(ClientSettings));
+    /// ahhhh catch 22
+    // we cant know how many clients to reserve BEFORE going through this
+    //sc->client_settings = calloc(sc->ho->num_clients, sizeof(ClientSettings));
+    sc->ho = holder_init(tm, client_allocations, &(sc->client_settings));
 
     sc->client_allocations = client_allocations;
 

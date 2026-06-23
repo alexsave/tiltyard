@@ -3,12 +3,13 @@
 #include "client.h"
 #include "types.h"
 #include "holder.h"
+#include "client_settings.h"
 
 // methods for dealing with the fact that we have many clients and many types
 
 
 // this takes ownership of client_allocations
-Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
+Holder* holder_init(TypeMetadata* tm, u32* client_allocations, ClientSettings** client_settings) {
     Holder* ho = malloc(sizeof(Holder));
     ho->client_allocations = client_allocations;
     ho->tm = tm;
@@ -22,6 +23,9 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
             num_clients++;
         }
 
+    // ok hear me out
+    *client_settings = calloc(num_clients, sizeof(ClientSettings));
+
     ho->num_clients = num_clients;
     // probably the biggest memory block in the entire program
     ho->client_data = malloc(num_clients * sizeof(void*));
@@ -31,26 +35,26 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations) {
     // doesn't even matter if cz_index is 1 or 0 or whatever
     for (type_index = 0; type_index < tm->IMPLS_COUNT; type_index++) {
         for (u32 i = 0; i < client_allocations[type_index]; i++){
-            //printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
-            //printf("hi\n");
-            // so this is something like CZ*
-              //printf("pointer %p \n", (void*)(ho->tm->all_clients[type_index].client_free));
-            //printf("%p %p \n", (void*)(ho->tm->all_clients[type_index]->client_free), ho->client_data[client_id]);
             ho->client_data[client_id] = (ho->tm->all_clients[type_index].client_init)();
-            //printf("bye\n");
+
+            // somethign like 
+            
+            (ho->tm->all_clients[type_index].get_settings)(ho->client_data[client_id], &((*client_settings)[client_id]));
+            // what do you think
 
             // store this somewhere
             client_id++;
         }
-        // so go through all the types, and create client_allocation amount of that type of client
     }
-            //printf("end of loop\n");
 
     return ho;
 }
 
+
+// this wont be necessary anymore
+
 // loop through all, get initalize wakeup values
-u64* holder_get_init_ns(Holder * ho){
+/*u64* holder_get_init_ns(Holder * ho){
     u64* init_ts = malloc(ho->num_clients * sizeof(u64));
     u32 client_id = 0;
     //printf("%d, %d\n", ho->tm->IMPLS_COUNT, ho->client_allocations[0]);
@@ -66,7 +70,7 @@ u64* holder_get_init_ns(Holder * ho){
     }
 
     return init_ts;
-}
+}*/
 
 u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context) {
     u32 running_max = 0;

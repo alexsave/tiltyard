@@ -1,4 +1,5 @@
 #include "client.h"
+#include "client_settings.h"
 #include "types.h"
 #include "strategy/client_zero.h"
 #include "strategy/client_one.h"
@@ -16,10 +17,8 @@ TypeMetadata* get_types() {
         tm->all_clients[tm->a ## _index].client_init = (void* (*)())a ##_init; \
         tm->all_clients[tm->a ## _index].get_name = (char* (*)(void*))a ##_get_name; \
         tm->all_clients[tm->a ## _index].on_snapshot = (u8 (*)(void*, Context*))a ##_on_snapshot; \
-        tm->all_clients[tm->a ## _index].client_free = (void (*)(void*))a ##_free; \
-        tm->all_clients[tm->a ## _index].initial_wakeup = (u64 (*)(void*))a ##_initial_wakeup; \
-        tm->all_clients[tm->a ## _index].processing_time = (u64 (*)(void*))a ##_processing_time; \
-        tm->all_clients[tm->a ## _index].net_latency = (u64 (*)(void*))a ##_net_latency;
+        tm->all_clients[tm->a ## _index].get_settings = (void (*)(void*, ClientSettings*))a ##_get_settings; \
+        tm->all_clients[tm->a ## _index].client_free = (void (*)(void*))a ##_free;
     IMPLS
     #undef X
 

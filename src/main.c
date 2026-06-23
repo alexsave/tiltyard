@@ -78,15 +78,16 @@ int main(int argc, char* argv[]){
     // shoudl be pretty easy to veirfy
 
     // maybe get all client init config here?
-    u64* inits = holder_get_init_ns(sc->ho);
+    //u64* inits = holder_get_init_ns(sc->ho);
 
     for(u32 i = 0; i < ho->num_clients; i++) {
         uint64_t client_id = i; 
         uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
-        sch_schedule(sch, boot_event, inits[i]);
+        sch_schedule(sch, boot_event, client_settings[i].initial_wake);
+        printf("schedling %u for %llu\n", i, client_settings[i].initial_wake);
     }
 
-    free(inits);
+    //free(inits);
 
     // when we have stop orders that are hit and convert to market orders
     // we cannot put them immediately into the sw queue

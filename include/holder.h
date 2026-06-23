@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "client.h"
+#include "client_settings.h"
 
 typedef struct Holder {
     u32* client_allocations;
@@ -11,8 +12,8 @@ typedef struct Holder {
     TypeMetadata* tm;
 } Holder;
 
-Holder* holder_init(TypeMetadata* tm, u32* client_allocations);
-u64* holder_get_init_ns(Holder * ho);
+Holder* holder_init(TypeMetadata* tm, u32* client_allocations, ClientSettings** client_settings);
+//u64* holder_get_init_ns(Holder * ho);
 
 u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context);
 

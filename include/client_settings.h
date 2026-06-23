@@ -21,6 +21,11 @@ typedef struct ClientSettings {
     u32 buying_power;
     u32 shares;
     u32 reserved_shares;
+
+    u64 initial_wake;
+    u64 processing_time;
+    u64 net_latency;
+    
 } ClientSettings;
 
 #endif

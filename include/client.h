@@ -25,12 +25,7 @@ typedef struct Client {
     u8 (*on_snapshot)(void* self, Context* ctx); 
     void (*client_free)(void* self);
 
-    // not as sure about these but hey 
-    // when to schedule the FIRST awaken, called just once
-    u64 (*initial_wakeup)(void* self);
-    // how long it takes to do something on client
-    u64 (*processing_time)(void* self);
-    u64 (*net_latency)(void* self);
+    void (*get_settings)(void* self, ClientSettings* client_settings);
 } Client;
 
 typedef struct TypeMetadata {

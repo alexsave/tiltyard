@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "strategy/client_one.h"
+#include "client_settings.h"
 #include "sch.h"
 #include "types.h"
 #include "order.h"
@@ -30,17 +31,14 @@ u8 co_on_snapshot(CO* cz, Context* ctx){
     return 1;
 }
 
-u64 co_initial_wakeup(CO* co) {
-    return (uint64_t)24*60*60*S_TO_NS;
-}
-
-// you turn on the comptuer, then the trading software launches in like 15 seconds?
-u64 co_processing_time(CO* co) {
-    return (uint64_t)25 * S_TO_NS;
-}
-
-u64 co_net_latency(CO* co) {
-    return (uint64_t)300000000;// 300 ms?
+// i mean we could set these elsehwere, 
+// but it seems cleaner to keep client properties in the client
+void co_get_settings(CO* co, ClientSettings* client_settings) {
+       // these are like fixed state. you can only change these by  
+    // making your computer faster, colocating, booting faster
+    client_settings->initial_wake = (u64)24*60*60*S_TO_NS;
+    client_settings->processing_time = (u64)25 * S_TO_NS;
+    client_settings->net_latency = (u64)50000000; 
 }
 
 void co_free(CO* co) {
