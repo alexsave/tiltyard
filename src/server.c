@@ -348,10 +348,11 @@ void server_hw_to_sw(ServerContext* sc) {
         //weird
         return;
     }   
-    u32 moving_order = cb_deque(sc->hw_queue); // handle zero case
-                                               //printf("hw to sw move requested for order %u\n", moving_order);
+    u32 moving_order = cb_deque(sc->hw_queue); 
+    // handle zero case
+    //printf("hw to sw move requested for order %u\n", moving_order);
 
-                                               // If it's not empty, someone has already scheduled an exec_start_id
+    // If it's not empty, someone has already scheduled an exec_start_id
     if (cb_is_empty(sc->sw_queue)) {
         u64 SW_TO_EXEC_DELAY = 100;
         u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_START_ID & PARAM_MASK);
@@ -396,7 +397,7 @@ void server_free(ServerContext* sc) {
     cb_free(sc->sw_queue);
     cb_free(sc->hw_queue);
     cb_free(sc->convert_holder);
-    
+
     free(sc->rand);
 
     free(sc);

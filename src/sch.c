@@ -177,33 +177,29 @@ uint64_t sch_pop(SCH* sch) {
 
         uint64_t latest_threshold = (current_time + max_delta)/S_TO_NS;
 
-        if (!pq_is_empty(sch->slow_bucket)){
 
-            while (!pq_is_empty(sch->slow_bucket)) {
-                uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
-                //printf("rescheduling to fast bucket %llu\n", pq_peek(sch->slow_bucket) & E_MASK);
-
-
-                if (peek_ts > latest_threshold)
-                    break;
-
-                uint64_t pop = pq_pop(sch->slow_bucket);
-
-                uint64_t seconds = peek_ts * S_TO_NS;
-
-                uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
-                uint64_t priority = seconds & P_MASK;
+        while (!pq_is_empty(sch->slow_bucket)) {
+            uint64_t peek_ts = pq_peek(sch->slow_bucket) >> E_BITS;
+            //printf("rescheduling to fast bucket %llu\n", pq_peek(sch->slow_bucket) & E_MASK);
 
 
-                rand_next(sch->rand);
-                priority += (((*sch->rand) & MAX_U32) >> 3);
+            if (peek_ts > latest_threshold)
+                break;
 
-                pq_push(
-                        sch->buckets[bucket], 
-                        (priority << E_BITS) | (pop & E_MASK));
+            uint64_t pop = pq_pop(sch->slow_bucket);
+
+            uint64_t seconds = peek_ts * S_TO_NS;
+
+            uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
+            uint64_t priority = seconds & P_MASK;
 
 
-            }
+            rand_next(sch->rand);
+            priority += (((*sch->rand) & MAX_U32) >> 3);
+
+            pq_push(sch->buckets[bucket], (priority << E_BITS) | (pop & E_MASK));
+
+
         }
 
         sch_schedule(sch, next, max_delta);
