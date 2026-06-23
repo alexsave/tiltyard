@@ -27,7 +27,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
 
 
 uint64_t cz_initial_wakeup(CZ* cz) {
-    return (uint64_t)24*60*60*S_TO_NS;
+    return (uint64_t)25*60*60*S_TO_NS;
 }
 
 // you turn on the comptuer, then the trading software launches in like 15 seconds?

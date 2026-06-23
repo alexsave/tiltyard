@@ -27,26 +27,6 @@ void log_full(uint64_t raw) {
 }
 
 
-/*void transfer(Order* resting_order, Order* new_order, ClientSettings* client_settings){
-    // ok transfer $$$ 
-    u32 cost = resting_order->price * resting_order->quantity;
-
-    u32 taker = new_order->client_id;
-    u32 maker = resting_order->client_id;
-
-    // finally some accountability
-    if ((new_order->flags >> BUY_DIRECTION_BIT) & 1){ 
-        //client_settings[taker].buying_power -= cost;
-        client_settings[maker].buying_power += cost;
-        //client_settings[taker].shares += resting_order->quantity;
-        client_settings[maker].shares -= resting_order->quantity;
-    } else {
-        //client_settings[taker].buying_power += cost;
-        client_settings[maker].buying_power -= cost;
-        //client_settings[taker].shares -= resting_order->quantity;
-        client_settings[maker].shares += resting_order->quantity;
-    }   
-}*/
 
 int main(int argc, char* argv[]){
 
@@ -61,10 +41,10 @@ int main(int argc, char* argv[]){
 
     // now we can do
     // this shoudl definitely be done by main
-    client_allocations[tm->cz_index] = 0;
+    client_allocations[tm->cz_index] = 1;
     client_allocations[tm->co_index] = 1;
 
-    ServerContext* sc = server_init(tm, client_allocations, 603);
+    ServerContext* sc = server_init(tm, client_allocations, 603603);
 
     // genuinely needed everywhere
     SCH* sch = sc->sch;
@@ -72,14 +52,22 @@ int main(int argc, char* argv[]){
     Holder* ho = sc->ho;
       
     ClientSettings* client_settings = sc->client_settings;
-//calloc(ho->num_clients, sizeof(ClientSettings));
+
     // just a little treat to get them started
     client_settings[0].is_cash_account = 1;
     client_settings[0].cash = 100000;
-    client_settings[0].reserved_cash = 100000;
+    client_settings[0].reserved_cash = 0;
     client_settings[0].buying_power = 100000;
     client_settings[0].shares = 100;
     client_settings[0].reserved_shares = 0;
+    // ideally we also get this from clients
+
+    client_settings[1].is_cash_account = 1;
+    client_settings[1].cash = 100000;
+    client_settings[1].reserved_cash = 0;
+    client_settings[1].buying_power = 100000;
+    client_settings[1].shares = 100;
+    client_settings[1].reserved_shares = 0;
     // ideally we also get this from clients
 
     FL* orders = sc->orders;
@@ -91,19 +79,14 @@ int main(int argc, char* argv[]){
 
     // maybe get all client init config here?
     u64* inits = holder_get_init_ns(sc->ho);
-    //printf("got init times\n");
 
     for(u32 i = 0; i < ho->num_clients; i++) {
         uint64_t client_id = i; 
-        uint64_t first_boot = inits[i];
-
         uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
-        
-        sch_schedule(sch, boot_event, first_boot);
+        sch_schedule(sch, boot_event, inits[i]);
     }
 
     free(inits);
-    //printf("done freeing\n");
 
     // when we have stop orders that are hit and convert to market orders
     // we cannot put them immediately into the sw queue
@@ -121,6 +104,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, kill_event, 2*(24*60*60) *S_TO_NS);
 
     Context* context = malloc(sizeof(Context));
+    rand_next(sc->rand);
 
     while(1){
         rand_next(sc->rand);
@@ -129,7 +113,6 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
-        //printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
         //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
         //log_full(next);
 
@@ -155,6 +138,7 @@ int main(int argc, char* argv[]){
             } else if (order_id == EXEC_START_ID) {
                 server_exec_start(sc);
             } else if (order_id == EXEC_END_ID) {
+                printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
                 server_exec_end(sc);
             } else if (order_id == EXEC_TO_SW_ID) {
                 // kinda broken for now
@@ -259,9 +243,7 @@ int main(int argc, char* argv[]){
                 // for now, le't sjust say we wena tto connect to the websocket
 
                 u64 delay = 300000000;//cz_postboot_socket(0);
-                Order p = {
-                    .flags = 1 << WS_BIT, 
-                    .client_id = client_id };
+                Order p = { .flags = 1 << WS_BIT, .client_id = client_id };
                 u32 order_id = fl_insert(orders,&p);
                 u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
 

@@ -87,29 +87,13 @@ void server_exec_end(ServerContext* sc) {
     u32 in_cost = before_quantity * in->price;
     u8 is_buy = (in->flags >> BUY_DIRECTION_BIT) & 1;
 
-    u8 has_bp = client_settings[agro].buying_power >= in_cost;
-    u8 has_shares = client_settings[agro].shares >= before_quantity;
+    ClientSettings* cs = (client_settings + agro);//?
+
+    u8 has_bp = (cs->cash - cs->reserved_cash) >= in_cost;
+    u8 has_shares = (cs->shares - cs->reserved_shares) >= before_quantity;
     u8 is_valid_quantity = in->quantity > 0;
     u8 is_valid_price = in->price > 0;
     u8 is_toggle_ws = (in->flags & (1 << WS_BIT));
-
-
-
-
-    // lets thingk
-    /*
-       000 what the fuck is this guy even doing - bump refs and return current
-       001 fair enough, he just want to connect - bump refs and connect and return current
-       010 broke boy reject this - bump refs and return current
-       011 broke boy disconnect
-       100 invalid reqest
-       101 invalid reqest and toggle
-       110 ok let him trade
-       111 trade and disconnect?
-
-     */
-
-    // as all possibilities need some response, everything except valid trade will need to bump refs
 
     u8 will_modify;
     if(is_buy)
@@ -124,14 +108,18 @@ void server_exec_end(ServerContext* sc) {
     if (is_toggle_ws) 
         client_settings[agro].ws = !(client_settings[agro].ws);
 
-    printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
+    printf("order id %u buy %u quantity %u price %u from client id #%u [$%u/$%u/%ush/%ush]\n", exec_order_id, is_buy, in->quantity, in->price, agro, 
+    client_settings[agro].cash,
+    client_settings[agro].reserved_cash,
+    client_settings[agro].shares,
+    client_settings[agro].reserved_shares);
+
     if(is_buy && !has_bp) 
-        printf("unfortunately hes a broke boy, rejected $%u > $%u\n", in_cost, client_settings[agro].buying_power);
+        printf("rejected $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
 
     if(!is_buy && !has_shares) 
-        printf("unfortunately he does not have enough shares, rejected %u > %u\n", before_quantity, client_settings[agro].shares);
+        printf("rejected %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
 
-    //printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
 
 
     //void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
@@ -156,45 +144,35 @@ void server_exec_end(ServerContext* sc) {
         //exit(1);
         //}
 
-
-
-        // ok hold on
-
         u32 partial_fill_id = MAX_U32;
         u32 partial_fill_q = 0;
 
         sc->last_mbo = ob_limit(exec_order_id, orders, sc->last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
 
+
+        // lets go case by case
+        // cash account - resting limit made
+
+        // ^ but this is just for our client of incoming order
+        // we still need to go through and fill the orders we hit
+        // just dont update the incoming order client after this "taker"
+
+
         // check exec_order_id to see if we had a partial fill
         if (is_buy) {
-            client_settings[agro].buying_power -= in->quantity * in->price;
+            //client_settings[agro].buying_power -= in->quantity * in->price;
+            //printf("decrementing reserved by 
+            // yeah i think this is correct, in->quantity shoudl be left at 0
+            // ah- marketable limits dont affect RESERVED cash, only cash itself
+            client_settings[agro].reserved_cash += in->quantity * in->price;
         } else {
-            client_settings[agro].shares -= in->quantity;
+            //client_settings[agro].shares -= in->quantity;
+            client_settings[agro].reserved_shares += in->quantity;
         }
 
-        //if (in->quantity < before_quantity) {
-
-        // this is actually how much buying power to reduce by, as it's left on the board
-        //}
-
-
-
-
-        /*if (is_buy) {
-          if ((!cb_is_empty(fills)) || (partial_fill_id != MAX_U32)){
-        // instant fill, need to handle buying power separately
-        } else {
-        client_settings[agro].buying_power -= in_cost;
-        }
-        } else {
-        // long sales only for now
-        client_settings[agro].shares -= before_quantity;
-        //client_settings[taker].buying_power -= cost;
-        }*/
 
         // now that it went through we need to update the buying power of the dude
         //client_settings[taker].buying_power -= in_cost;
-
 
         // ok now we have fills and partial_id maybe
         // partial id will be filled last by definiton
@@ -213,15 +191,20 @@ void server_exec_end(ServerContext* sc) {
             u32 maker = order->client_id;
             //transfer(order, in, client_settings);
 
+            u32 q = order->quantity;
+
             if (is_buy){
-                // if we're buying then the 
-                client_settings[taker].buying_power -= cost;
-                client_settings[maker].buying_power += cost;
-                client_settings[taker].shares += order->quantity;
+                cs->cash -= cost;
+                cs->shares += q;
+                client_settings[maker].cash += cost;
+                client_settings[maker].shares -= q;
+                client_settings[maker].reserved_shares -= q;
             } else {
-                client_settings[taker].shares -= order->quantity;
-                client_settings[maker].shares += order->quantity;
-                client_settings[taker].buying_power += cost;
+                cs->shares -= order->quantity;
+                cs->cash += cost;
+                client_settings[maker].shares += q;
+                client_settings[maker].cash -= cost;
+                client_settings[maker].reserved_cash -= cost;
             }
 
 
@@ -240,15 +223,20 @@ void server_exec_end(ServerContext* sc) {
             u32 taker = in->client_id;
             u32 maker = order->client_id;
 
-            // finally some accountability
+            u32 q = partial_fill_q;
+
             if (is_buy){
-                client_settings[taker].buying_power -= cost;
-                client_settings[maker].buying_power += cost;
-                client_settings[taker].shares += partial_fill_q;
+                cs->cash -= cost;
+                cs->shares += q;
+                client_settings[maker].cash += cost;
+                client_settings[maker].shares -= q;
+                client_settings[maker].reserved_shares -= q;
             } else {
-                client_settings[taker].shares -= partial_fill_q;
-                client_settings[maker].shares += partial_fill_q;
-                client_settings[taker].buying_power += cost;
+                cs->shares -= order->quantity;
+                cs->cash += cost;
+                client_settings[maker].shares += q;
+                client_settings[maker].cash -= cost;
+                client_settings[maker].reserved_cash -= cost;
             }
 
         }
