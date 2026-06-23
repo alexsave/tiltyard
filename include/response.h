@@ -10,6 +10,7 @@ typedef struct Response {
     // hopefully 1 millino snapshots is enough
 
     u32 snapshot_id;// also boot or socket
+    u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast 
     u8 status;
 } Response;
 

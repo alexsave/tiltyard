@@ -17,7 +17,7 @@ char* cz_get_name(CZ* cz) {
 }
 
 u8 cz_on_snapshot(CZ* cz, Context* ctx){
-    Order* order_ptr = ctx->order_ptr;
+    Order* order_ptr = ctx->next_order_ptr;
     order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
 
     order_ptr->price = ctx->random & MAX_U16;

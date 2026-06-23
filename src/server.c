@@ -255,7 +255,7 @@ void server_exec_end(ServerContext* sc) {
 
     if (!will_modify){
         // only send reject to that one client, later
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=1};
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=1, .order_id = exec_order_id};
         u32 response_id = fl_insert(responses, &r);
 
         u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
@@ -267,10 +267,10 @@ void server_exec_end(ServerContext* sc) {
 
         // i know its ugly
         for (u32 ci = 0; ci < ho->num_clients; ci++){
-            if(client_settings[ci].ws) {
+            if((ci != in->client_id) && (client_settings[ci].ws)) {
                 //printf("making response for %u\n", ci);
                 // make a new response for them
-                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo};
+                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32};
                 u32 response_id = fl_insert(responses, &r);
                 u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
 
@@ -280,6 +280,16 @@ void server_exec_end(ServerContext* sc) {
                 sch_schedule(sch, response_event, calculate_jitter(client_settings + (ci), sc->rand)); 
             }
         }
+
+        // send special one to self
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id};
+        u32 response_id = fl_insert(responses, &r);
+        u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+
+        //.. delay is tricky, we actually need to go get client values again
+        // probably using holder.
+        // but for now let's just say exactly 100ms lol
+        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand)); 
     }
 
 

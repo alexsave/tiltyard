@@ -176,8 +176,10 @@ int main(int argc, char* argv[]){
             Order* empty = fl_get(orders, order_id);
             //printf("got order from fl\n");
 
-            context->order_ptr = empty;
+            context->next_order_ptr = empty;
             context->mbo_snapshot = mbo_raw;
+            context->status = status;
+            context->order_id = response.order_id;
 
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);

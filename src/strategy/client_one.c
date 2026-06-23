@@ -5,6 +5,7 @@
 #include "client_settings.h"
 #include "sch.h"
 #include "types.h"
+#include "constants.h"
 #include "order.h"
 
 CO* co_init() {
@@ -18,7 +19,15 @@ char* co_get_name(CO* co){
 }
 
 u8 co_on_snapshot(CO* cz, Context* ctx){
-    Order* order_ptr = ctx->order_ptr;
+
+    if (ctx->order_id == MAX_U32){
+        printf("order id %u\n", ctx->order_id);
+        printf("ok order_id can be treated as broadcast\n");
+        exit(1);
+
+    }
+
+    Order* order_ptr = ctx->next_order_ptr;
     // randomly choose between buy and sell
     order_ptr->flags = ((ctx->random >>25) & 1) << BUY_DIRECTION_BIT;
     //order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
