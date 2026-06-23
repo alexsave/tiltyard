@@ -54,7 +54,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 void server_exec_end(ServerContext* sc) {
 
     // maybe I rename at least the struct names
-    u32 last_mbo = sc->last_mbo;
+    //u32 last_mbo = sc->last_mbo;
     ClientSettings* client_settings = sc->client_settings;
     BS* mbo_bs = sc->mbo_bs;
     SCH* sch = sc->sch;
@@ -118,7 +118,7 @@ void server_exec_end(ServerContext* sc) {
         will_modify = has_shares & is_valid_quantity & is_valid_price;
 
     if (!will_modify)
-        bs_bump_refs(mbo_bs, last_mbo);
+        bs_bump_refs(mbo_bs, sc->last_mbo);
 
     // for now we'll just handle socket connections
     if (is_toggle_ws) 
@@ -150,7 +150,7 @@ void server_exec_end(ServerContext* sc) {
             }
         }
 
-        u32 prev_last_mbo = last_mbo;
+        u32 prev_last_mbo = sc->last_mbo;
         //if(exec_order_id > 2000000){
         //mbo_dump(mbo);
         //exit(1);
@@ -163,7 +163,7 @@ void server_exec_end(ServerContext* sc) {
         u32 partial_fill_id = MAX_U32;
         u32 partial_fill_q = 0;
 
-        last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
+        sc->last_mbo = ob_limit(exec_order_id, orders, sc->last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
 
         // check exec_order_id to see if we had a partial fill
         if (is_buy) {
@@ -256,7 +256,7 @@ void server_exec_end(ServerContext* sc) {
         //
 
         bs_get(mbo_bs, prev_last_mbo);
-        mbo_dump(bs_get_no_ref(mbo_bs, last_mbo));
+        mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
 
         //bit hacky but ensures we can get the first snpashot into processing
         //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
@@ -264,7 +264,7 @@ void server_exec_end(ServerContext* sc) {
 
     if (!will_modify){
         // only send reject to that one client, later
-        Response r = {.client_id = in->client_id, .snapshot_id = last_mbo, .status=1};
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=1};
         u32 response_id = fl_insert(responses, &r);
         u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
         sch_schedule(sch, response_event, 100000000); 
@@ -278,7 +278,7 @@ void server_exec_end(ServerContext* sc) {
             if(client_settings[ci].ws) {
                 //printf("making response for %u\n", ci);
                 // make a new response for them
-                Response r = {.client_id = ci, .snapshot_id = last_mbo};
+                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo};
                 u32 response_id = fl_insert(responses, &r);
                 u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
 
