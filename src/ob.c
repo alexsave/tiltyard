@@ -29,7 +29,7 @@ void mbo_dump(void* mbo_raw) {
     u32 last_byte_offset = MAX_U16;
     for (u16 i = 0; i < mbo->level_count; i++) {
         MBOIndex mboi = mbo->levels[i];
-        
+
         if (i == mbo->hi_bid_index)
             printf("[");
         else 
@@ -37,7 +37,7 @@ void mbo_dump(void* mbo_raw) {
         printf("level\t%uc with quantity\t%u at offset\t%u", mboi.price, mboi.quantity, mboi.byte_offset);
         if (mboi.byte_offset == last_byte_offset){
             printf("consecutive level byte offsets were equal, impossible\n");
-            
+
             //exit(1);
         }
         last_byte_offset = mboi.byte_offset;
@@ -70,8 +70,8 @@ void mbo_dump(void* mbo_raw) {
         for (u16 j = 0; j < mbol->order_count; j++) {
             u32 oid = mbol->order_ids[j];
             //if (oid > 43440){
-                //printf("some ridiculously large id value already\n");
-                //exit(1);
+            //printf("some ridiculously large id value already\n");
+            //exit(1);
             //}
             printf("#%u\t", mbol->order_ids[j]);
         }    
@@ -320,7 +320,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                     u32 prev_order_id = mod_level->order_ids[i];
                     cb_queue(fills, prev_order_id);
                 }
-                
+
             }
 
             if (level_quantity > remaining_quantity) {
@@ -385,7 +385,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         // modified fill does this for for all levele below, adn aslo the partial thing
 
         // I believe the exact formula is...
-    
+
         // lets split it up for now
 
         // fuck it i think it's the same for all three scenarios

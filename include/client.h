@@ -10,8 +10,8 @@
 
 // just add more as you wish :)
 #define IMPLS \
-    X(co) \
-    X(cz)
+    X(cz) \
+    X(co)
 
 // THIS WHOLE THING needs to be passed around
 
