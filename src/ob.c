@@ -399,6 +399,9 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         if (exact_level_wipe) {
             new_mbo->hi_bid_index = new_current_level - 1;
+            // clean
+            Order* current_order = (Order*)fl_get(orders, order_id);
+            current_order->quantity = 0;
 
         } else if (partial_fill) {
             // the INCOMING order is partially filled, thus left as a standing order
@@ -416,6 +419,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             Order* current_order = (Order*)fl_get(orders, order_id);
             current_order->quantity = remaining_quantity;
         } else if (modified_level) {
+            Order* current_order = (Order*)fl_get(orders, order_id);
+            current_order->quantity = 0;
             if (direction == 1) 
                 new_mbo->hi_bid_index = new_current_level - 1;
             else 

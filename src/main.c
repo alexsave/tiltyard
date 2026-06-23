@@ -80,7 +80,7 @@ typedef struct Response {
 
 
 int main(int argc, char* argv[]){
-    uint64_t seed = 603;
+    uint64_t seed = 603603;
     uint64_t* rand = rand_init(seed);
     rand_next(rand);
 
@@ -182,7 +182,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, (25*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 30*(24*60*60) *S_TO_NS);
 
     // no reservations
     FL* responses = fl_init(sizeof(Response), MAX_U32);
@@ -292,6 +292,8 @@ int main(int argc, char* argv[]){
 
                 u32 agro = in->client_id;
 
+                printf("argro is %u btw\n" , agro);
+
                 u8 will_modify_ob = 0;
 
                 u32 before_quantity = in->quantity;
@@ -301,6 +303,7 @@ int main(int argc, char* argv[]){
                 u8 has_bp = client_settings[agro].buying_power >= in_cost;
                 u8 has_shares = client_settings[agro].shares >= before_quantity;
                 u8 is_valid_quantity = in->quantity > 0;
+                u8 is_valid_price = in->price > 0;
                 u8 is_toggle_ws = (in->flags & (1 << WS_BIT));
 
                 
@@ -323,9 +326,9 @@ int main(int argc, char* argv[]){
 
                 u8 will_modify;
                 if(is_buy)
-                    will_modify = has_bp & is_valid_quantity;
+                    will_modify = has_bp & is_valid_quantity & is_valid_price;
                 else 
-                    will_modify = has_shares & is_valid_quantity;
+                    will_modify = has_shares & is_valid_quantity & is_valid_price;
 
                 if (!will_modify)
                     bs_bump_refs(mbo_bs, last_mbo);
@@ -336,10 +339,10 @@ int main(int argc, char* argv[]){
 
                 printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
                 if(is_buy && !has_bp) 
-                    printf("unfortunately hes a broke boy, rejected $%u\n", client_settings[agro].buying_power);
+                    printf("unfortunately hes a broke boy, rejected $%u > $%u\n", in_cost, client_settings[agro].buying_power);
 
                 if(!is_buy && !has_shares) 
-                    printf("unfortunately he does not have enough shares, rejected %u\n", client_settings[agro].shares);
+                    printf("unfortunately he does not have enough shares, rejected %u > %u\n", before_quantity, client_settings[agro].shares);
 
                 //printf("order info id %u buy? %u quantity %u price %u from client id #%u\n", exec_order_id, (in->flags >> BUY_DIRECTION_BIT)&1, in->quantity, in->price, agro);
 
@@ -369,57 +372,37 @@ int main(int argc, char* argv[]){
 
 
                     // ok hold on
-                    // making a limit order takes from a clients buying power. As if they already purchased it
-                    // if it gets filled at a better order... then what?
-                    // you have $1000
-                    // lets say you make a bid for $600, quantity 1
-                    // buying power is down to $400
-                    // lowest ask is at $500 for quantity 1 
-                    // buyer definitely gets one share
-                    // $500 of that $600 buying power goes to the seller
-                    // $100 goes back to buyer?
-                    // seems right
-                    // but that's only on full fill of our order
-
-                    // maybe we leave a standing order
-                    // bid for $300
-                    // $300 is thus tied up
-                    // but what if you make a bid for $600 quantity 2
-                    // $500 level only has one
-                    // we correctly calculate the $500 is filled, but then leaves a $600 limit order
-                    // $500 filling sends $500 to the seller and $100 of buying power back to buyer
-                    // but $600 is still tied up with the resting order
-                    // $1000 - $600*2
-                    // then +$100
-                    // leaving -$100
 
                     partial_fill_id = MAX_U32;
 
                     last_mbo = ob_limit(exec_order_id, orders, last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
 
                     // check exec_order_id to see if we had a partial fill
-
-                    if (in->quantity < before_quantity) {
-                        // the aggressor order was partially filled and is now standing order, of quantity (before_quantity - in->quantity)
-                        // interesting but does not actually chagne buying power
-                        // the price of this remainging thing matches the original requested price and will be returned by a subsequent aggressor
-                    } else if(cb_is_empty(fills) && (partial_fill_id == MAX_U32)) {
-                        // no fills, it was on the nonmarketable side
-                        // order is resting
-                        // also 
-                        // 
+                    if (is_buy) {
+                        client_settings[agro].buying_power -= in->quantity * in->price;
                     } else {
+                        client_settings[agro].shares -= in->quantity;
                     }
 
+                    //if (in->quantity < before_quantity) {
+
+                        // this is actually how much buying power to reduce by, as it's left on the board
+                    //}
+
+
                     
                     
-                    if (is_buy) {
-                        client_settings[agro].buying_power -= in_cost;
+                    /*if (is_buy) {
+                        if ((!cb_is_empty(fills)) || (partial_fill_id != MAX_U32)){
+                            // instant fill, need to handle buying power separately
+                        } else {
+                            client_settings[agro].buying_power -= in_cost;
+                        }
                     } else {
                         // long sales only for now
                         client_settings[agro].shares -= before_quantity;
                         //client_settings[taker].buying_power -= cost;
-                    }
+                    }*/
 
                     // now that it went through we need to update the buying power of the dude
                     //client_settings[taker].buying_power -= in_cost;
@@ -434,7 +417,26 @@ int main(int argc, char* argv[]){
                         Order* order = (Order*)fl_get(orders, filled_order_id);
 
                         printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
-                        transfer(order, in, client_settings);
+
+
+                        u32 cost = order->price * order->quantity;
+
+                        u32 taker = in->client_id;
+                        u32 maker = order->client_id;
+                        //transfer(order, in, client_settings);
+
+                        if (is_buy){
+                            // if we're buying then the 
+                            client_settings[taker].buying_power -= cost;
+                            client_settings[maker].buying_power += cost;
+                            client_settings[taker].shares += order->quantity;
+                        } else {
+                            client_settings[taker].shares -= order->quantity;
+                            client_settings[maker].shares += order->quantity;
+                            client_settings[taker].buying_power += cost;
+                        }
+
+
                     }
 
                     if (partial_fill_id != MAX_U32) {
@@ -451,16 +453,14 @@ int main(int argc, char* argv[]){
                         u32 maker = order->client_id;
 
                         // finally some accountability
-                        if ((in->flags >> BUY_DIRECTION_BIT) & 1){
-                            //client_settings[taker].buying_power -= cost;
+                        if (is_buy){
+                            client_settings[taker].buying_power -= cost;
                             client_settings[maker].buying_power += cost;
                             client_settings[taker].shares += partial_fill_q;
-                            client_settings[maker].shares -= partial_fill_q;
                         } else {
-                            //client_settings[taker].buying_power += cost;
-                            client_settings[maker].buying_power -= cost;
                             client_settings[taker].shares -= partial_fill_q;
                             client_settings[maker].shares += partial_fill_q;
+                            client_settings[taker].buying_power += cost;
                         }
 
                     }
