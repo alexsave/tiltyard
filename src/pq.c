@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "types.h"
+#include "constants.h"
 #include "pq.h"
 
 // min heap priority queue
@@ -21,11 +23,16 @@ PQ* pq_init() {
 
 // crucial note: 
 // this assumed that priority is either entire event, or top bits of event
+// something in here is fucked
 void pq_push(PQ* pq, uint64_t event) {
-    printf("scheduling into pq %llu\n", event);
+    u8 debug = 0;
+    //if (event == 17210121269605826586){
+    //printf("scheduling into pq %llu\n", event);
+        //debug = 1;
+    //}
+
     // we are restricted by limits of current 
-    uint32_t max_32 = ((((uint32_t)1 << 31) - 1) << 1) + 1;
-    if (pq->current == max_32) {
+    if (pq->current == MAX_U32) {
         printf("Current has hit max value, upgrade to uint64 now.\n");
         exit(1);
         return;
@@ -33,6 +40,7 @@ void pq_push(PQ* pq, uint64_t event) {
 
     // actually more like ==, i don't know how you could get >
     if (pq->current == pq->heap[CAPACITY_INDEX]) {
+        //if(debug) printf("doublign");
         uint64_t current_capacity = pq->heap[CAPACITY_INDEX];
         uint64_t* doubled = malloc(2 * current_capacity * sizeof(uint64_t));
     
@@ -60,6 +68,11 @@ void pq_push(PQ* pq, uint64_t event) {
         }
     }
 
+        //for(u8 i = 0; i < pq->current + 1; i++){
+            //printf("%llu ", pq->heap[i]);
+        //}
+        //printf("\n");
+
     pq->current = pq->current + 1;
 }
 
@@ -85,6 +98,20 @@ uint64_t pq_pop(PQ* pq) {
     uint64_t* heap = pq->heap;
 
     uint64_t event = heap[1];  
+    //u8 debug = 0;
+    //if (event == 17210121269605826586){
+        //printf("you want to explain to me how exaclty this comes out twice??????\n");
+        //printf("pq current %u\n", pq->current);
+        //printf("%llu %llu %llu %llu\n", heap[0] , heap[1] , heap[2] , heap[3] );
+        //debug = 1;
+
+    //}
+
+    //u8 debug2 = 0;
+    //if (event == 17208732656582262808){
+        //printf("DEBUG2 locked in\n");
+        //debug2 = 1;
+    //}
     uint32_t run = 1;
 
     uint64_t last_copy = heap[pq->current];
@@ -92,11 +119,19 @@ uint64_t pq_pop(PQ* pq) {
     heap[pq->current] = 0;
     // just to be safe, ya never know
 
+
     while(1){
+        //if(debug2){
+            //for(u8 i = 0; i < pq->current + 1; i++){
+                //printf("%i: %llu\n", i, pq->heap[i]);
+            //}
+            //printf("\n");
+        //}   
+
         uint32_t left = (run << 1);
         uint32_t right = left + 1;
 
-        // printf("right %llu pq current %llu left  %llu\n", right, pq->current, left);
+        //if (debug2) printf("left %llu pq current %llu run %llu right  %llu\n", left, pq->current, run, right);
         if (right >= pq->current && left >= pq->current) {
             // gottem
             heap[run] = last_copy;
@@ -124,11 +159,13 @@ uint64_t pq_pop(PQ* pq) {
         // normal case
         // it has to be the case that both the value at left & right is 
 
-        // printf("right e %llu last copy %llu left e %llu\n", right_e, last_copy, left_e);
+        //if (debug2) printf("left e %llu last copy %llu right e %llu\n", left_e, last_copy, right_e);
         // I think it's really just two, but I ned to test properly yes
         if (right_e > last_copy && left_e > last_copy) {
-            // printf("where we need to be\n");
+            //if(debug2) printf("where we need to be\n");
             // exactly where we need to be
+            // did you forget to write buddy?????????????
+            heap[run] = last_copy;
             break;
         } else {
             // very likely case
@@ -145,6 +182,10 @@ uint64_t pq_pop(PQ* pq) {
         }
 
     }
+    //for(u8 i = 0; i < pq->current + 1; i++){
+        //printf("%llu ", pq->heap[i]);
+    //}
+    //printf("\n");
 
     return event;
 }
