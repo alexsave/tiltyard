@@ -6,6 +6,7 @@
 #include "constants.h"
 
 #include "order.h"
+#include "utils.h"
 #include "client_settings.h"
 #include "bs.h"
 #include "fl.h"
@@ -256,8 +257,9 @@ void server_exec_end(ServerContext* sc) {
         // only send reject to that one client, later
         Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=1};
         u32 response_id = fl_insert(responses, &r);
+
         u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
-        sch_schedule(sch, response_event, 100000000); 
+        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand));
 
     } else {
         // accepted orders will modify this
@@ -275,7 +277,7 @@ void server_exec_end(ServerContext* sc) {
                 //.. delay is tricky, we actually need to go get client values again
                 // probably using holder.
                 // but for now let's just say exactly 100ms lol
-                sch_schedule(sch, response_event, 100000000); 
+                sch_schedule(sch, response_event, calculate_jitter(client_settings + (ci), sc->rand)); 
             }
         }
     }

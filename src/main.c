@@ -15,6 +15,7 @@
 #include "client_settings.h"
 #include "holder.h"
 #include "order.h"
+#include "utils.h"
 
 #include "ob.h"
 
@@ -25,8 +26,6 @@ void log_full(uint64_t raw) {
             (raw >> (E_BITS-T_BITS)) & T_MASK, 
             raw & PARAM_MASK);
 }
-
-
 
 int main(int argc, char* argv[]){
 
@@ -77,17 +76,12 @@ int main(int argc, char* argv[]){
 
     // shoudl be pretty easy to veirfy
 
-    // maybe get all client init config here?
-    //u64* inits = holder_get_init_ns(sc->ho);
-
     for(u32 i = 0; i < ho->num_clients; i++) {
         uint64_t client_id = i; 
         uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
         sch_schedule(sch, boot_event, client_settings[i].initial_wake);
         printf("schedling %u for %llu\n", i, client_settings[i].initial_wake);
     }
-
-    //free(inits);
 
     // when we have stop orders that are hit and convert to market orders
     // we cannot put them immediately into the sw queue
@@ -98,7 +92,6 @@ int main(int argc, char* argv[]){
     // is 0 safe to schedule into?
     // maybe
     sch_schedule(sch, repeat_event, 0);
-
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
@@ -115,7 +108,7 @@ int main(int argc, char* argv[]){
 
         uint64_t now_ns = sch_now_ns(sch);
         //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
-        //log_full(next);
+        log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
@@ -126,7 +119,7 @@ int main(int argc, char* argv[]){
         // different from waht is below
         if (type == SERVER_TYPE) {
             // something in the server
-            //printf("server_type");
+            printf("server_type");
 
             u64 order_id = params;
 
@@ -146,7 +139,7 @@ int main(int argc, char* argv[]){
                 server_exec_to_sw(sc);
             }
         } else if (type == CLIENT_IN_TYPE) {
-            //printf("client in type\n");
+            printf("client in type\n");
 
             //print
 
@@ -195,37 +188,20 @@ int main(int argc, char* argv[]){
             } else {
                 empty->client_id = client_id;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
-                u64 delay = 300000000;
-                //printf("scheduling\n");
+                u64 delay = client_settings[client_id].processing_time;
+                
                 sch_schedule(sch, order_event, delay);
-                //printf("scheduled\n");
             }
 
 
-
-
-            //printf("client in type done\n");
-
         } else if (type == CLIENT_OUT_TYPE) {
-            //printf("client out type\n");
+            printf("client out type\n");
 
             u32 order_id = params;
-            //Order order = *(Order*)fl_get(orders, order_id);
-
-            // roughtly along these lines, need better solution
-
-            u64 base_jitter = 200000000;//cz_base_latency(0);
-            u64 random_jitter = 
-                (base_jitter) + // 1.0x
-                (base_jitter >> 7) + // + ~.01x
-                (((base_jitter * (*(sc->rand) & MAX_U32)) >> 32 ) >> 5); // + 0x~.03x
-
-
+            Order order = *(Order*)fl_get(orders, order_id);
 
             u64 out_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
-            //printf("scheduling %llu\n", out_event);
-
-            sch_schedule(sch, out_event, random_jitter);
+            sch_schedule(sch, out_event, calculate_jitter(client_settings + (order.client_id), sc->rand));
         } else if (type == CONTROL_TYPE) {
             //printf("control type\n");
             // it will go here
