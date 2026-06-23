@@ -123,7 +123,12 @@ void server_exec_end(ServerContext* sc) {
     if(!is_buy && !has_shares) 
         printf("rejected %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
 
+    u8 REJECT_BIT = 0;
 
+    u8 status = 0;
+
+    if (!will_modify)
+        status |= (1<<REJECT_BIT);
 
     //void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
 
@@ -252,10 +257,16 @@ void server_exec_end(ServerContext* sc) {
         //bit hacky but ensures we can get the first snpashot into processing
         //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
     }
+    
+    if (is_toggle_ws){
+        printf("status before togglign ws bit %u\n", status);
+        status |= (1 << WS_BIT);
+        printf("status after togglign ws bit %u\n", status);
+    }
 
     if (!will_modify){
         // only send reject to that one client, later
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=1, .order_id = exec_order_id};
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=status, .order_id = exec_order_id};
         u32 response_id = fl_insert(responses, &r);
 
         u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
@@ -270,7 +281,7 @@ void server_exec_end(ServerContext* sc) {
             if((ci != in->client_id) && (client_settings[ci].ws)) {
                 //printf("making response for %u\n", ci);
                 // make a new response for them
-                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32};
+                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32, .status=0};
                 u32 response_id = fl_insert(responses, &r);
                 u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
 
@@ -278,11 +289,12 @@ void server_exec_end(ServerContext* sc) {
                 // probably using holder.
                 // but for now let's just say exactly 100ms lol
                 sch_schedule(sch, response_event, calculate_jitter(client_settings + (ci), sc->rand)); 
+                rand_next(sc->rand);
             }
         }
 
         // send special one to self
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id};
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id, .status=status};
         u32 response_id = fl_insert(responses, &r);
         u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
 

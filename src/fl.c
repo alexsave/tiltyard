@@ -45,7 +45,7 @@ uint32_t fl_insert(FL* fl, void* data) {
 
     // we're about to get id from fl->sp + 1
     if (fl->sp + 1 >= fl->capacity) {
-        printf("doubling fl capacity\n");
+        //printf("doubling fl capacity\n");
         // quick check (does not fit in 32 bits anymore)
         if ((fl->capacity << 1) == 0) {
             printf("completely out of capacity. rearchitect freelist\n");
@@ -74,11 +74,13 @@ uint32_t fl_insert(FL* fl, void* data) {
         fl->data = doubled_data;
 
         fl->sp = fl->capacity;
+        //printf("moving sp to new capacity %u\n", fl->sp);
         
         fl->capacity <<= 1;
     }
 
     fl->sp = fl->sp + 1;
+    //printf("incrementing sp %u\n", fl->sp);
 
     uint32_t id = fl->stack[fl->sp];
 
@@ -86,9 +88,9 @@ uint32_t fl_insert(FL* fl, void* data) {
     // maybe we have shared helper methods, but specific types of freelists use fixed width
     for (uint8_t i = 0; i < fl->type_size; i++) {
         if(id>197855180){
-            printf("sp %u capacity %u\n", fl->sp, fl->capacity);
-            printf("id %u i %u destination %u\n", id, i, ((id*fl->type_size)+i));
-            printf("getting bytes %p\n", data);
+            //printf("sp %u capacity %u\n", fl->sp, fl->capacity);
+            //printf("id %u i %u destination %u\n", id, i, ((id*fl->type_size)+i));
+            //printf("getting bytes %p\n", data);
             exit(1);
         }
         fl->data[(id*fl->type_size)+i] = *(uint8_t*)(data+i);
@@ -100,17 +102,18 @@ uint32_t fl_insert(FL* fl, void* data) {
 void* fl_release(FL* fl, uint32_t id) {
     // shouldn't happen but prevents extra releases
     if (fl->sp == 0 || id >= fl->id_limit) {
-        printf("This shouldn't happen, investigate why %u was released again.\n", id);
+        printf("This shouldn't happen, investigate why %u was released again. sp %u, limit %u\n", id, fl->sp, fl->id_limit);
         // null ptr is fine
-        return 0;
+        //return 0;
     }
 
     // pop the id back into the stack of available ids
     fl->stack[fl->sp] = id;
     fl->sp = fl->sp - 1;
+    //printf("decrementing sp %u\n", fl->sp);
 
     //maybe?
-    return fl->data + id*fl->type_size;
+    return fl_get(fl, id);
 }
 
 void* fl_get(FL* fl, uint32_t id) {

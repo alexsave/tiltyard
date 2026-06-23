@@ -85,7 +85,9 @@ static const u8 BUY_DIRECTION_BIT = 7;
 static const u8 IS_LIMIT_BIT = 6; // otherwise market
 static const u8 HAS_STOP_BIT = 5;
 static const u8 OCO_BIT = 4;
-static const u8 WS_BIT = 0;
+static const u8 WS_BIT = 3;
+
+// wait til you hear about cancel-replace orders you will shit brix
 
 // also includes websocket connections, but here we go
 typedef struct Order {

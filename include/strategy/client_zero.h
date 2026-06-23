@@ -10,6 +10,7 @@
 
 typedef struct CZ {
     uint64_t idk;
+    ClientSettings* cs;
 } CZ;
 
 CZ* cz_init();

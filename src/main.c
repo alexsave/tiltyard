@@ -40,8 +40,8 @@ int main(int argc, char* argv[]){
 
     // now we can do
     // this shoudl definitely be done by main
-    client_allocations[tm->cz_index] = 1;
-    client_allocations[tm->co_index] = 1;
+    client_allocations[tm->cz_index] = 2;
+    client_allocations[tm->co_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603603);
 
@@ -51,23 +51,6 @@ int main(int argc, char* argv[]){
     Holder* ho = sc->ho;
       
     ClientSettings* client_settings = sc->client_settings;
-
-    // just a little treat to get them started
-    client_settings[0].is_cash_account = 1;
-    client_settings[0].cash = 100000;
-    client_settings[0].reserved_cash = 0;
-    client_settings[0].buying_power = 100000;
-    client_settings[0].shares = 100;
-    client_settings[0].reserved_shares = 0;
-    // ideally we also get this from clients
-
-    client_settings[1].is_cash_account = 1;
-    client_settings[1].cash = 100000;
-    client_settings[1].reserved_cash = 0;
-    client_settings[1].buying_power = 100000;
-    client_settings[1].shares = 100;
-    client_settings[1].reserved_shares = 0;
-    // ideally we also get this from clients
 
     FL* orders = sc->orders;
     FL* responses = sc->responses;
@@ -80,7 +63,7 @@ int main(int argc, char* argv[]){
         uint64_t client_id = i; 
         uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
         sch_schedule(sch, boot_event, client_settings[i].initial_wake);
-        printf("schedling %u for %llu\n", i, client_settings[i].initial_wake);
+        //printf("schedling %u for %llu\n", i, client_settings[i].initial_wake);
     }
 
     // when we have stop orders that are hit and convert to market orders
@@ -95,10 +78,9 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, 2*(24*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 365*(24*60*60) *S_TO_NS);
 
     Context* context = malloc(sizeof(Context));
-    rand_next(sc->rand);
 
     while(1){
         rand_next(sc->rand);
@@ -107,19 +89,17 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
-        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
+        printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
         log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
         uint64_t params = next & PARAM_MASK;
 
-
-
         // different from waht is below
         if (type == SERVER_TYPE) {
             // something in the server
-            printf("server_type");
+            //printf("server type\n");
 
             u64 order_id = params;
 
@@ -132,7 +112,7 @@ int main(int argc, char* argv[]){
             } else if (order_id == EXEC_START_ID) {
                 server_exec_start(sc);
             } else if (order_id == EXEC_END_ID) {
-                printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
+                //printf("NOW %llu ~%llus \n", now_ns, now_ns/1000000000);
                 server_exec_end(sc);
             } else if (order_id == EXEC_TO_SW_ID) {
                 // kinda broken for now
@@ -147,13 +127,15 @@ int main(int argc, char* argv[]){
             // params provides response id
             u32 response_id = params;
 
-            //printf("releaseing response \n");
+            printf("releaseing response \n");
             Response response = *(Response*)fl_release(responses, response_id);
 
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
             u8 status = response.status;
+
+            printf("client_id %u snapshot id %u status %u\n", client_id, snapshot_id, status);
 
             // otherwise we actually look at the snapshot and do stuff with it
 
@@ -245,7 +227,11 @@ int main(int argc, char* argv[]){
 
     }
 
-    printf("client 0 $%u and shares %u\n", client_settings[0].buying_power, client_settings[0].shares);
+    for(u32 i = 0; i < ho->num_clients; i++) {
+        u32 agro = i;
+        ClientSettings* cs = sc->client_settings + agro;
+        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    }
 
     mbo_dump(bs_get_no_ref(sc->mbo_bs, sc->last_mbo));
 
