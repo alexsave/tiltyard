@@ -109,7 +109,7 @@ void holder_free(Holder * ho) {
     // deceiving, but its really that mapping of index to client impl
 
     free(ho->client_allocations);
-    //tm_free(ho->tm);
+    tm_free(ho->tm);// not sure why this was commented out
     free(ho->client_data);
     free(ho);
 }

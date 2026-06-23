@@ -52,5 +52,15 @@ static const u32 MAX_U32 = 4294967295;
 static const u16 MAX_U16 = 65535;
 static const u8 MAX_U8 = 255;
 
+// server param types
+// the ordering of these actually matters for tie breakers
+static const u32 HW_TO_SW_ID = MAX_PARAM - 0;
+static const u32 EXEC_START_ID = MAX_PARAM - 1;
+static const u32 EXEC_END_ID = MAX_PARAM - 2;
+static const u32 EXEC_TO_SW_ID = MAX_PARAM - 3;
+static const u32 MIN_RESERVED_PACKET = EXEC_TO_SW_ID;
+
+
+
 #endif
 
