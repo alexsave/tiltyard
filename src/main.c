@@ -89,8 +89,8 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         uint64_t now_ns = sch_now_ns(sch);
-        printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
-        log_full(next);
+        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
+        //log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
@@ -119,7 +119,7 @@ int main(int argc, char* argv[]){
                 server_exec_to_sw(sc);
             }
         } else if (type == CLIENT_IN_TYPE) {
-            printf("client in type\n");
+            //printf("client in type\n");
 
             //print
 
@@ -127,7 +127,7 @@ int main(int argc, char* argv[]){
             // params provides response id
             u32 response_id = params;
 
-            printf("releaseing response \n");
+            //printf("releaseing response \n");
             Response response = *(Response*)fl_release(responses, response_id);
 
 
@@ -135,7 +135,7 @@ int main(int argc, char* argv[]){
             u32 snapshot_id = response.snapshot_id;
             u8 status = response.status;
 
-            printf("client_id %u snapshot id %u status %u\n", client_id, snapshot_id, status);
+            //printf("client_id %u snapshot id %u status %u\n", client_id, snapshot_id, status);
 
             // otherwise we actually look at the snapshot and do stuff with it
 
@@ -179,7 +179,7 @@ int main(int argc, char* argv[]){
 
 
         } else if (type == CLIENT_OUT_TYPE) {
-            printf("client out type\n");
+            //printf("client out type\n");
 
             u32 order_id = params;
             Order order = *(Order*)fl_get(orders, order_id);

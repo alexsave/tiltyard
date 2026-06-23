@@ -111,24 +111,30 @@ void server_exec_end(ServerContext* sc) {
     if (is_toggle_ws) 
         client_settings[agro].ws = !(client_settings[agro].ws);
 
-    printf("order id %u buy %u quantity %u price %u from client id #%u [$%u/$%u/%ush/%ush]\n", exec_order_id, is_buy, in->quantity, in->price, agro, 
+    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, 
     client_settings[agro].cash,
     client_settings[agro].reserved_cash,
     client_settings[agro].shares,
     client_settings[agro].reserved_shares);
 
     if(is_buy && !has_bp) 
-        printf("rejected $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
+        printf("REJ $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
 
     if(!is_buy && !has_shares) 
-        printf("rejected %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
+        printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
+
+    if (will_modify)
+        printf("accepted\n");
 
     u8 REJECT_BIT = 0;
 
     u8 status = 0;
 
-    if (!will_modify)
+    if (!will_modify) {
+        // drop the order, we dont need it anymore. they'll know it was rejected but we need the space back
         status |= (1<<REJECT_BIT);
+        fl_release(orders, exec_order_id);
+    }
 
     //void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
 
