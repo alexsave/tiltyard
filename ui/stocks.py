@@ -4,6 +4,10 @@ from datetime import datetime
 
 
 # --- build 1s candles straight from the trade log ---
+# log line format:
+#   TRADE <side> <price> <qty> <order_id> <ts_ns> [PARTIAL]
+# side is 0=sell / 1=buy; the timestamp now lives on the trade itself, so we
+# bucket each trade by its own whole second (no separate NOW lines anymore).
 secs = []   # epoch second for each candle
 
 opens = []
@@ -11,45 +15,32 @@ his = []
 lows = []
 closes = []
 
-last = 0
 now = None
 
 with open("../f") as f:
     for x in f:
-        cmd = x.split(" ")
+        cmd = x.split()
 
-        if cmd[0] == "TRADE:":
-            last = int(cmd[2]) / 100   # cents -> dollars
-            if not secs:
-                continue
-            if opens[-1] == -1:
-                # first trade of the bucket defines open and seeds the range
-                opens[-1] = last
-                his[-1] = last
-                lows[-1] = last
-            closes[-1] = last
-            if last > his[-1]:
-                his[-1] = last
-            if last < lows[-1]:
-                lows[-1] = last
+        if len(cmd) < 6 or cmd[0] != "TRADE":
+            continue
 
-        elif cmd[0] == "NOW":
-            s = int(cmd[1]) // 1000000000   # whole-second bucket
-            if s != now:
-                now = s
-                secs.append(s)
-                opens.append(-1)
-                his.append(last)
-                lows.append(last)
-                closes.append(last)
+        price = int(cmd[2]) / 100        # cents -> dollars
+        s = int(cmd[5]) // 1000000000    # ts ns -> whole-second bucket
 
-# drop seconds with zero trades (open never set) so empty windows stay blank
-keep = [i for i in range(len(secs)) if opens[i] != -1]
-secs = [secs[i] for i in keep]
-opens = [opens[i] for i in keep]
-his = [his[i] for i in keep]
-lows = [lows[i] for i in keep]
-closes = [closes[i] for i in keep]
+        if s != now:
+            # new second: trade seeds open/high/low/close for the bucket
+            now = s
+            secs.append(s)
+            opens.append(price)
+            his.append(price)
+            lows.append(price)
+            closes.append(price)
+        else:
+            closes[-1] = price
+            if price > his[-1]:
+                his[-1] = price
+            if price < lows[-1]:
+                lows[-1] = price
 
 
 # --- roll the 1s candles up into 1min candles ---
