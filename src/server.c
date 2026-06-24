@@ -247,7 +247,7 @@ void server_exec_end(ServerContext* sc) {
         Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=status, .order_id = exec_order_id};
         u32 response_id = fl_insert(responses, &r);
 
-        u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
         sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand));
 
     } else {
@@ -261,7 +261,7 @@ void server_exec_end(ServerContext* sc) {
                 // make a new response for them
                 Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32, .status=0};
                 u32 response_id = fl_insert(responses, &r);
-                u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+                u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
 
                 //.. delay is tricky, we actually need to go get client values again
                 // probably using holder.
@@ -274,7 +274,7 @@ void server_exec_end(ServerContext* sc) {
         // send special one to self
         Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id, .status=status};
         u32 response_id = fl_insert(responses, &r);
-        u64 response_event = ((CLIENT_IN_TYPE & T_MASK) << PARAM_BITS) | (response_id & PARAM_MASK);
+        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
 
         //.. delay is tricky, we actually need to go get client values again
         // probably using holder.

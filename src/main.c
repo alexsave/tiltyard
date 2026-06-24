@@ -32,7 +32,7 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 1000; 
+    client_allocations[tm->cz_index] = 100;
     client_allocations[tm->co_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
@@ -54,8 +54,6 @@ int main(int argc, char* argv[]){
         uint64_t boot_event = build_event(CONTROL_TYPE, client_id);
         sch_schedule(sch, boot_event, client_settings[i].initial_wake);
     }
-
-    // Initialization
 
     FL* orders = sc->orders;
     FL* responses = sc->responses;
@@ -164,6 +162,7 @@ int main(int argc, char* argv[]){
                 fl_release(orders, new_order_id);
             } else {
                 empty->client_id = client_id;
+                //empty->flags = 0;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (new_order_id & PARAM_MASK);
                 u64 delay = client_settings[client_id].processing_time;
 

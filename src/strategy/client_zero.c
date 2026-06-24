@@ -12,8 +12,8 @@
 CZ* cz_init() {
     //printf("client Z is init!\n");
     CZ* cz = malloc(sizeof(CZ));
-    cz->cash_guess = 100000;
-    cz->shares_guess = 100;
+    cz->cash_guess = 1000000;
+    cz->shares_guess = 1000;
     return cz;
 }
 
@@ -62,8 +62,8 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     Order* order_ptr = ctx->next_order_ptr;
     order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
 
-    order_ptr->price = ctx->random & MAX_U16;
-    order_ptr->quantity = ((ctx->random & MAX_U8) >> 2) + 1;
+    order_ptr->price = (ctx->random & MAX_U16) >> 3;
+    order_ptr->quantity = ((ctx->random & MAX_U8) >> 3) + 1;
 
     // ok this is great and all
     // but lets do some clinet side validation to chop down on spam
@@ -74,11 +74,11 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     if ((order_ptr->flags >> BUY_DIRECTION_BIT) & 1) {
         // keep it simpel for now 
         if (cz->cash_guess < order_ptr->price * order_ptr->quantity)
-            return 0;
+            return is_ws;
         cz->cash_guess -= order_ptr->price * order_ptr->quantity;
     } else {
         if (cz->shares_guess < order_ptr->quantity)
-            return 0;
+            return is_ws;
         cz->shares_guess -= order_ptr->quantity;
     }  
 
@@ -96,10 +96,10 @@ void cz_get_settings(CZ* cz, ClientSettings* client_settings){
 
     // could be interesting to randomize these...
     client_settings->is_cash_account = 1;
-    client_settings->cash = 100000;
+    client_settings->cash = 1000000;
     client_settings->reserved_cash = 0;
-    client_settings->buying_power = 100000;
-    client_settings->shares = 100;
+    //client_settings->buying_power = 100000;
+    client_settings->shares = 1000;
     client_settings->reserved_shares = 0;
 
     // since we cant techincally use it anyways 
