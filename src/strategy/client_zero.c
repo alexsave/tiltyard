@@ -12,7 +12,7 @@
 CZ* cz_init() {
     //printf("client Z is init!\n");
     CZ* cz = malloc(sizeof(CZ));
-    cz->cash_guess = 1000000;
+    cz->cash_guess = 10000000;
     cz->shares_guess = 1000;
     return cz;
 }
@@ -22,7 +22,7 @@ char* cz_get_name(CZ* cz) {
 }
 
 u8 cz_on_snapshot(CZ* cz, Context* ctx){
-
+    u8 is_ping = ((ctx->status) >> PING_BIT) & 1;
     u8 is_ws = ((ctx->status) >> WS_BIT) & 1;
     u8 is_rej = ((ctx->status) >> REJECT_BIT) & 1;
     u8 is_broadcast = ctx->order_id == MAX_U32;
@@ -68,6 +68,12 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     order_ptr->price = (ctx->random & MAX_U16) >> 3;
     order_ptr->quantity = ((ctx->random & MAX_U8) >> 3) + 1;
 
+    if (is_ping) {
+        // switch to sw
+        //order_ptr->flags |= (1 << WS_BIT);
+        // should only be like 5 of these
+    }
+
     // ok this is great and all
     // but lets do some clinet side validation to chop down on spam
     // while we could do a more through check in main.c, that would be like cheating
@@ -99,7 +105,7 @@ void cz_get_settings(CZ* cz, ClientSettings* client_settings){
 
     // could be interesting to randomize these...
     client_settings->is_cash_account = 1;
-    client_settings->cash = 1000000;
+    client_settings->cash = 10000000;
     client_settings->reserved_cash = 0;
     //client_settings->buying_power = 100000;
     client_settings->shares = 1000;

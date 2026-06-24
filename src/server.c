@@ -95,6 +95,10 @@ void server_exec_end(ServerContext* sc) {
     u8 is_valid_quantity = in->quantity > 0;
     u8 is_valid_price = in->price > 0;
     u8 is_toggle_ws = (in->flags & (1 << WS_BIT));
+    // you can have a "ping order", so order without the websocket stuff
+    u8 is_ping = (in->flags >> PING_BIT) & 1;
+
+    //u8 is_pure_get = !is_valid_quantity & is_ping;
 
     u8 will_modify;
     if(is_buy)
@@ -102,8 +106,6 @@ void server_exec_end(ServerContext* sc) {
     else 
         will_modify = has_shares & is_valid_quantity & is_valid_price;
 
-    if (!will_modify)
-        bs_bump_refs(mbo_bs, sc->last_mbo);
 
     // for now we'll just handle socket connections
     if (is_toggle_ws) 
@@ -122,23 +124,23 @@ void server_exec_end(ServerContext* sc) {
 
     u8 status = 0;
 
-    if (!will_modify) {
-        // drop the order, we dont need it anymore. they'll know it was rejected but we need the space back
-        status |= (1<<REJECT_BIT);
-        // sorry but it will be release AFTER the client gets a chance to read
-        //fl_release(orders, exec_order_id);
-    }
+    if (is_ping)
+        status |= 1 << PING_BIT;
+
+    if (is_toggle_ws)
+        status |= (1 << WS_BIT);
 
     if (will_modify){
         printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
         printf("accepted\n");
 
         // mbo_dump + used to create next snapshot
-        u16 ref_count = 1;
+        // us, plus at least the one who sent request?
+        u16 ref_count = 2;
 
         // todo create l3 list later
         for (u32 ci = 0; ci < ho->num_clients; ci++){
-            if(client_settings[ci].ws) {
+            if((ci != in->client_id) && (client_settings[ci].ws)) {
                 ref_count++;
             }
         }
@@ -234,23 +236,7 @@ void server_exec_end(ServerContext* sc) {
 
         bs_get(mbo_bs, prev_last_mbo);
         //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
-    }
 
-    if (is_toggle_ws){
-        //printf("status before togglign ws bit %u\n", status);
-        status |= (1 << WS_BIT);
-        //printf("status after togglign ws bit %u\n", status);
-    }
-
-    if (!will_modify){
-        // only send reject to that one client, later
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=status, .order_id = exec_order_id};
-        u32 response_id = fl_insert(responses, &r);
-
-        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand));
-
-    } else {
         // accepted orders will modify this
         //u32 server_snapshot = handle;
 
@@ -280,6 +266,16 @@ void server_exec_end(ServerContext* sc) {
         // probably using holder.
         // but for now let's just say exactly 100ms lol
         sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand)); 
+
+    } else {
+        status |= (1<<REJECT_BIT);
+        bs_bump_refs(mbo_bs, sc->last_mbo);
+        // only send reject to that one client, later
+        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=status, .order_id = exec_order_id};
+        u32 response_id = fl_insert(responses, &r);
+
+        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand));
     }
 
 

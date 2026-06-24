@@ -32,7 +32,7 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 100;
+    client_allocations[tm->cz_index] = 1000;
     client_allocations[tm->co_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
@@ -100,53 +100,36 @@ int main(int argc, char* argv[]){
         } else if (type == CLIENT_IN_TYPE) {
             //printf("client in type\n");
 
-            //print
+            // now how do we handle a ping event
 
-            // client actually needs to read the response
-            // params provides response id
             u32 response_id = params;
 
-            //printf("releaseing response \n");
             Response response = *(Response*)fl_release(responses, response_id);
-
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
             u8 status = response.status;
 
-            //printf("response_id %u client_id %u snapshot id %u status %u\n", params, client_id, snapshot_id, status);
-            //printf("repsonse id limit %u capacity %u size type %u\n", responses->id_limit, responses->capacity, responses->type_size);
-
-            // otherwise we actually look at the snapshot and do stuff with it
-
-            // idk should we bump refs on error then send it anyways?
-            //void* mbo_raw
-            //if (status != 1){
-
-            //printf("getting mbo raw\n");
-            void* mbo_raw = bs_get(mbo_bs, snapshot_id);
-            //printf("got mbo raw\n");
-            //}
-
             Order tmp = {};
-
-            // reserved client space for order
-            // just need something to copy from
-            //printf("inserting order to fl\n");
             u32 new_order_id = fl_insert(orders, &tmp);
-            //printf("getting order from fl\n");
             Order* empty = fl_get(orders, new_order_id);
-            //printf("got order from fl\n");
 
             context->next_order_ptr = empty;
-            context->mbo_snapshot = mbo_raw;
+
             context->status = status;
-            context->order_id = response.order_id;
-            // hol on it wont always be in repsonse to an order
-            // order id max u32 indicates broadcast, thus no order id... right? sure
-            // which is then immediately released
-            if (response.order_id != MAX_U32)
-                context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
+
+            if ((status >> PING_BIT) & 1) {
+                // the client can schedule these from themselves kinda
+                // so this will not come with any knowledge of snapshot
+                // and this is not in response to an order id 
+                // this just wakes them up
+                context->mbo_snapshot = 0;
+            } else {
+                context->mbo_snapshot = bs_get(mbo_bs, snapshot_id);
+                context->order_id = response.order_id;
+                if (response.order_id != MAX_U32)
+                    context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
+            }
 
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);
@@ -187,6 +170,16 @@ int main(int argc, char* argv[]){
             u32 control_id = params;
             if (control_id < MIN_CONTROL_PARAM) {
                 u32 client_id = params;
+
+                // idk I feel like this makes more sense as a response type
+
+                Response r = {.client_id = client_id, .status = 1 << PING_BIT};
+                u32 response_id = fl_insert(responses, &r);
+                u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+                // really not sure about the delay here tbh
+                sch_schedule(sch, response_event, calculate_jitter(client_settings + (client_id), sc->rand));
+
+
                 // bump client, not necessarily for first tim
                 // for now we'll just have them connect with a socket order
                 // like we were doin earlier
@@ -195,12 +188,12 @@ int main(int argc, char* argv[]){
                 //printf("boot event\n");
                 // for now, le't sjust say we wena tto connect to the websocket
 
-                u64 delay = 300000000;//cz_postboot_socket(0);
-                Order p = { .flags = 1 << WS_BIT, .client_id = client_id };
-                u32 order_id = fl_insert(orders,&p);
-                u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
+                //u64 delay = 300000000;//cz_postboot_socket(0);
+                //Order p = { .flags = 1 << PING_BIT, .client_id = client_id };
+                //u32 order_id = fl_insert(orders,&p);
+                //u64 socket_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
 
-                sch_schedule(sch, socket_event, delay);
+                //sch_schedule(sch, socket_event, delay);
 
             } else if (control_id == CONTROL_PARAM_SLOW) {
                 // ignore, mostly handled by sch.c
