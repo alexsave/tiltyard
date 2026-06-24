@@ -109,10 +109,10 @@ void server_exec_end(ServerContext* sc) {
 
     // for now we'll just handle socket connections
     if (is_toggle_ws) 
-        client_settings[agro].ws = !(client_settings[agro].ws);
+        cs->ws = !(cs->ws);
 
     /*
-    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, client_settings[agro].cash, client_settings[agro].reserved_cash, client_settings[agro].shares, client_settings[agro].reserved_shares);
+    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
 
     if(is_buy && !has_bp) 
         printf("REJ $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
@@ -120,9 +120,10 @@ void server_exec_end(ServerContext* sc) {
     if(!is_buy && !has_shares) 
         printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
     */
+        
 
     if (will_modify){
-        printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, client_settings[agro].cash, client_settings[agro].reserved_cash, client_settings[agro].shares, client_settings[agro].reserved_shares);
+        printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
         printf("accepted\n");
     }
 
@@ -135,8 +136,6 @@ void server_exec_end(ServerContext* sc) {
         status |= (1<<REJECT_BIT);
         fl_release(orders, exec_order_id);
     }
-
-    //void* mbo = bs_get_no_ref(mbo_bs, last_mbo);
 
     // calculate ref count AFTER setting ws lol
     if (will_modify) {
@@ -198,30 +197,29 @@ void server_exec_end(ServerContext* sc) {
 
             printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
 
-
             u32 cost = order->price * order->quantity;
 
             u32 taker = in->client_id;
             u32 maker = order->client_id;
             //transfer(order, in, client_settings);
 
+            ClientSettings* mcs = (client_settings + maker);
+
             u32 q = order->quantity;
 
             if (is_buy){
                 cs->cash -= cost;
                 cs->shares += q;
-                client_settings[maker].cash += cost;
-                client_settings[maker].shares -= q;
-                client_settings[maker].reserved_shares -= q;
+                mcs->cash += cost;
+                mcs->shares -= 1;
+                mcs->reserved_shares -= 1;
             } else {
-                cs->shares -= order->quantity;
+                cs->shares -= q;
                 cs->cash += cost;
-                client_settings[maker].shares += q;
-                client_settings[maker].cash -= cost;
-                client_settings[maker].reserved_cash -= cost;
+                mcs->shares += q;
+                mcs->cash -= cost;
+                mcs->reserved_cash -= cost;
             }
-
-
         }
 
         if (partial_fill_id != MAX_U32) {
@@ -234,40 +232,34 @@ void server_exec_end(ServerContext* sc) {
             // ok transfer $$$
             u32 cost = order->price * partial_fill_q;
 
-            u32 taker = in->client_id;
             u32 maker = order->client_id;
+            ClientSettings* mcs = (client_settings + maker);
 
             u32 q = partial_fill_q;
 
             if (is_buy){
                 cs->cash -= cost;
                 cs->shares += q;
-                client_settings[maker].cash += cost;
-                client_settings[maker].shares -= q;
-                client_settings[maker].reserved_shares -= q;
+                mcs->cash += cost;
+                mcs->shares -= q;
+                mcs->reserved_shares -= q;
             } else {
-                cs->shares -= order->quantity;
+                cs->shares -= q;
                 cs->cash += cost;
-                client_settings[maker].shares += q;
-                client_settings[maker].cash -= cost;
-                client_settings[maker].reserved_cash -= cost;
+                mcs->shares += q;
+                mcs->cash -= cost;
+                mcs->reserved_cash -= cost;
             }
-
         }
-
-        //
 
         bs_get(mbo_bs, prev_last_mbo);
         //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
-
-        //bit hacky but ensures we can get the first snpashot into processing
-        //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
     }
 
     if (is_toggle_ws){
-        printf("status before togglign ws bit %u\n", status);
+        //printf("status before togglign ws bit %u\n", status);
         status |= (1 << WS_BIT);
-        printf("status after togglign ws bit %u\n", status);
+        //printf("status after togglign ws bit %u\n", status);
     }
 
     if (!will_modify){
