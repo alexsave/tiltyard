@@ -87,7 +87,8 @@ u8 holder_client_on_snapshot(Holder * ho, u32 client_id, Context* context) {
             break;
     }
     if (running_max < client_id){
-        printf("client id out of range of allocations, this is probably a bug\n");
+        printf("client id out of range of allocations, this is probably a bug %u %u\n", running_max, client_id);
+        exit(1);
         return 255;
     }
 

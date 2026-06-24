@@ -10,7 +10,11 @@
 
 typedef struct CZ {
     uint64_t idk;
-    ClientSettings* cs;
+    // yes but unusable
+    //ClientSettings* cs;
+    
+    u32 cash_guess;
+    u32 shares_guess;
 } CZ;
 
 CZ* cz_init();

@@ -116,7 +116,8 @@ int main(int argc, char* argv[]){
             u32 snapshot_id = response.snapshot_id;
             u8 status = response.status;
 
-            //printf("client_id %u snapshot id %u status %u\n", client_id, snapshot_id, status);
+            //printf("response_id %u client_id %u snapshot id %u status %u\n", params, client_id, snapshot_id, status);
+            //printf("repsonse id limit %u capacity %u size type %u\n", responses->id_limit, responses->capacity, responses->type_size);
 
             // otherwise we actually look at the snapshot and do stuff with it
 
@@ -143,6 +144,11 @@ int main(int argc, char* argv[]){
             context->mbo_snapshot = mbo_raw;
             context->status = status;
             context->order_id = response.order_id;
+            // hol on it wont always be in repsonse to an order
+            // order id max u32 indicates broadcast, thus no order id... right? sure
+            // which is then immediately released
+            if (response.order_id != MAX_U32)
+                context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
 
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);

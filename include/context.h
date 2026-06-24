@@ -6,9 +6,12 @@
 
 typedef struct Context {
     void* mbo_snapshot;
+    // same thing here, both needed
+    u32 order_id; // the order this response is for. MAX_U32 for broadcasts?
+    Order* response_order_ptr;
+
     Order* next_order_ptr;
     u32 random;
-    u32 order_id; // the order this response is for. MAX_U32 for broadcasts?
     u8 status; // status of ^THIS order
 } Context;
 
