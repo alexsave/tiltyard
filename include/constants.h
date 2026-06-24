@@ -25,7 +25,7 @@ static const uint8_t BUCKET_MASK = SCH_BUCKETS - 1;
 static const uint64_t S_TO_NS = 1000000000;
 
 //type bits
-static const uint8_t T_BITS = 3;
+static const uint8_t T_BITS = 2;
 static const uint8_t T_MASK = (1 << T_BITS) - 1;
 
 static const uint32_t PARAM_BITS = FULL_SIZE_BITS - P_BITS - T_BITS;
