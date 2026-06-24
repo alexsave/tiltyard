@@ -7,8 +7,6 @@
 #include "fl.h"
 #include "cb.h"
 
-static const u8 REJECT = 1;
-
 // full, for every price level
 typedef struct MBOIndex {
     u16 price;
