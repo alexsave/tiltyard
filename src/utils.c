@@ -12,3 +12,7 @@ u64 calculate_jitter(ClientSettings* cs, u64* rand){
         (((base_jitter * (*(rand) & MAX_U32)) >> 32 ) >> 5); // + 0x~.03x
 }
 
+u64 build_event(u64 type, u32 params) {
+    return ((type & T_MASK) << PARAM_BITS) | (params & PARAM_MASK);
+}
+

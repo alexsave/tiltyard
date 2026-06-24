@@ -28,59 +28,38 @@ void log_full(uint64_t raw) {
 }
 
 int main(int argc, char* argv[]){
-
-    // tf do we even pass in here?
-
-
-    // of course we have servercontext and context
-    
     TypeMetadata* tm = get_types();
-
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    // this shoudl definitely be done by main
-    client_allocations[tm->cz_index] = 40; 
-    // good news - we can reproduce shares quantity going negative with 6 clients and no return 0 safeguard
-
+    client_allocations[tm->cz_index] = 1000; 
     client_allocations[tm->co_index] = 0;
 
-    ServerContext* sc = server_init(tm, client_allocations, 603603);
+    ServerContext* sc = server_init(tm, client_allocations, 603);
 
     // genuinely needed everywhere
     SCH* sch = sc->sch;
 
+    uint64_t repeat_event = build_event(CONTROL_TYPE, CONTROL_PARAM_SLOW);
+    sch_schedule(sch, repeat_event, 0);
+
+    u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
+    sch_schedule(sch, kill_event, 30*(24*60*60) *S_TO_NS);
+
     Holder* ho = sc->ho;
-      
     ClientSettings* client_settings = sc->client_settings;
-
-    FL* orders = sc->orders;
-    FL* responses = sc->responses;
-
-    BS* mbo_bs = sc->mbo_bs;
-
-    // shoudl be pretty easy to veirfy
-
     for(u32 i = 0; i < ho->num_clients; i++) {
         uint64_t client_id = i; 
-        uint64_t boot_event = ((CONTROL_TYPE & T_MASK) << PARAM_BITS) | (client_id & PARAM_MASK);
+        
+        uint64_t boot_event = build_event(CONTROL_TYPE, client_id);
         sch_schedule(sch, boot_event, client_settings[i].initial_wake);
-        //printf("schedling %u for %llu\n", i, client_settings[i].initial_wake);
     }
-
-    // when we have stop orders that are hit and convert to market orders
-    // we cannot put them immediately into the sw queue
 
     // Initialization
 
-    uint64_t repeat_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_SLOW;
-    // is 0 safe to schedule into?
-    // maybe
-    sch_schedule(sch, repeat_event, 0);
-
-    u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
-    // one week
-    sch_schedule(sch, kill_event, 7*(24*60*60) *S_TO_NS);
+    FL* orders = sc->orders;
+    FL* responses = sc->responses;
+    BS* mbo_bs = sc->mbo_bs;
 
     Context* context = malloc(sizeof(Context));
 
@@ -155,9 +134,9 @@ int main(int argc, char* argv[]){
             // reserved client space for order
             // just need something to copy from
             //printf("inserting order to fl\n");
-            u32 order_id = fl_insert(orders, &tmp);
+            u32 new_order_id = fl_insert(orders, &tmp);
             //printf("getting order from fl\n");
-            Order* empty = fl_get(orders, order_id);
+            Order* empty = fl_get(orders, new_order_id);
             //printf("got order from fl\n");
 
             context->next_order_ptr = empty;
@@ -168,14 +147,20 @@ int main(int argc, char* argv[]){
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 
+            // ok they read the response order id, if it's rejected free it as its useless
+            if ((context->status >> REJECT_BIT) & 1) {
+                fl_release(orders, response.order_id);
+            }
+
+
             if (action == 0) {
                 //printf("reeasing order id\n");
-                fl_release(orders, order_id);
+                fl_release(orders, new_order_id);
             } else {
                 empty->client_id = client_id;
-                u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (order_id & PARAM_MASK);
+                u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (new_order_id & PARAM_MASK);
                 u64 delay = client_settings[client_id].processing_time;
-                
+
                 sch_schedule(sch, order_event, delay);
             }
 

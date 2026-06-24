@@ -82,8 +82,6 @@ void server_exec_end(ServerContext* sc) {
 
     u32 agro = in->client_id;
 
-    //printf("argro is %u btw\n" , agro);
-
     u8 will_modify_ob = 0;
 
     u32 before_quantity = in->quantity;
@@ -122,24 +120,18 @@ void server_exec_end(ServerContext* sc) {
     */
         
 
-    if (will_modify){
-        printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-        printf("accepted\n");
-    }
-
-    u8 REJECT_BIT = 0;
-
     u8 status = 0;
 
     if (!will_modify) {
         // drop the order, we dont need it anymore. they'll know it was rejected but we need the space back
         status |= (1<<REJECT_BIT);
-        fl_release(orders, exec_order_id);
+        // sorry but it will be release AFTER the client gets a chance to read
+        //fl_release(orders, exec_order_id);
     }
 
-    // calculate ref count AFTER setting ws lol
-    if (will_modify) {
-        //printf("operating on id %u\n", exec_order_id);
+    if (will_modify){
+        printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+        printf("accepted\n");
 
         // mbo_dump + used to create next snapshot
         u16 ref_count = 1;
@@ -162,10 +154,6 @@ void server_exec_end(ServerContext* sc) {
 
         sc->last_mbo = ob_limit(exec_order_id, orders, sc->last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
 
-
-        // lets go case by case
-        // cash account - resting limit made
-
         // ^ but this is just for our client of incoming order
         // we still need to go through and fill the orders we hit
         // just dont update the incoming order client after this "taker"
@@ -173,19 +161,10 @@ void server_exec_end(ServerContext* sc) {
 
         // check exec_order_id to see if we had a partial fill
         if (is_buy) {
-            //client_settings[agro].buying_power -= in->quantity * in->price;
-            //printf("decrementing reserved by 
-            // yeah i think this is correct, in->quantity shoudl be left at 0
-            // ah- marketable limits dont affect RESERVED cash, only cash itself
             client_settings[agro].reserved_cash += in->quantity * in->price;
         } else {
-            //client_settings[agro].shares -= in->quantity;
             client_settings[agro].reserved_shares += in->quantity;
         }
-
-
-        // now that it went through we need to update the buying power of the dude
-        //client_settings[taker].buying_power -= in_cost;
 
         // ok now we have fills and partial_id maybe
         // partial id will be filled last by definiton
@@ -193,7 +172,7 @@ void server_exec_end(ServerContext* sc) {
             u32 filled_order_id = cb_deque(fills);
             // its filled, we dont need it anymore I think
             // we could probably release, but it's confusing right now
-            Order* order = (Order*)fl_get(orders, filled_order_id);
+            Order* order = (Order*)fl_release(orders, filled_order_id);
 
             printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
 
@@ -250,6 +229,7 @@ void server_exec_end(ServerContext* sc) {
                 mcs->cash -= cost;
                 mcs->reserved_cash -= cost;
             }
+
         }
 
         bs_get(mbo_bs, prev_last_mbo);
