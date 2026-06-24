@@ -40,7 +40,9 @@ int main(int argc, char* argv[]){
 
     // now we can do
     // this shoudl definitely be done by main
-    client_allocations[tm->cz_index] = 2;
+    client_allocations[tm->cz_index] = 40; 
+    // good news - we can reproduce shares quantity going negative with 6 clients and no return 0 safeguard
+
     client_allocations[tm->co_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603603);
@@ -78,7 +80,7 @@ int main(int argc, char* argv[]){
 
     u64 kill_event = CONTROL_TYPE << (PARAM_BITS) | CONTROL_PARAM_KILL;
     // one week
-    sch_schedule(sch, kill_event, 365*(24*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 7*(24*60*60) *S_TO_NS);
 
     Context* context = malloc(sizeof(Context));
 

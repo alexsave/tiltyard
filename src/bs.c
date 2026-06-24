@@ -103,7 +103,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
     
     if (first.offset > last.offset){
         // |   [last ---- last+size] [size ---- size] ... [first --- first+size]
-        printf("first offset %d, last offset %d, last size %d, size %d\n", first.offset, last.offset, last.size, size);
+        //printf("first offset %d, last offset %d, last size %d, size %d\n", first.offset, last.offset, last.size, size);
         if (first.offset < last.offset + last.size + size){
             printf("doubling time\n");
 

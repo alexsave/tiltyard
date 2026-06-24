@@ -28,7 +28,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
     sc->client_allocations = client_allocations;
 
-    sc->mbo_bs = bs_init(8192);
+    sc->mbo_bs = bs_init(32768);
 
     void* mbo_address = 0;
     sc->last_mbo = bs_reserve(sc->mbo_bs, sizeof(MBO), 1, &mbo_address);
@@ -111,20 +111,20 @@ void server_exec_end(ServerContext* sc) {
     if (is_toggle_ws) 
         client_settings[agro].ws = !(client_settings[agro].ws);
 
-    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, 
-    client_settings[agro].cash,
-    client_settings[agro].reserved_cash,
-    client_settings[agro].shares,
-    client_settings[agro].reserved_shares);
+    /*
+    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, client_settings[agro].cash, client_settings[agro].reserved_cash, client_settings[agro].shares, client_settings[agro].reserved_shares);
 
     if(is_buy && !has_bp) 
         printf("REJ $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
 
     if(!is_buy && !has_shares) 
         printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
+    */
 
-    if (will_modify)
+    if (will_modify){
+        printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, client_settings[agro].cash, client_settings[agro].reserved_cash, client_settings[agro].shares, client_settings[agro].reserved_shares);
         printf("accepted\n");
+    }
 
     u8 REJECT_BIT = 0;
 
@@ -258,12 +258,12 @@ void server_exec_end(ServerContext* sc) {
         //
 
         bs_get(mbo_bs, prev_last_mbo);
-        mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
+        //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
 
         //bit hacky but ensures we can get the first snpashot into processing
         //u8 status = ob_limit(in->flags & (1 << BUY_DIRECTION_BIT), in->quantity, in, mbo_address, mbp_address, mbo_bs, mbp_bs);
     }
-    
+
     if (is_toggle_ws){
         printf("status before togglign ws bit %u\n", status);
         status |= (1 << WS_BIT);

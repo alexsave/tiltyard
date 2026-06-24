@@ -23,7 +23,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     if ((ctx->order_id != MAX_U32) && ((((ctx->status) >> WS_BIT) & 1)==0)){
         //it's your echo, just stfu
         //printf("shutting the fuck up because echo\n");
-        //return 0;
+        return 0;
     }
     
     Order* order_ptr = ctx->next_order_ptr;
@@ -44,7 +44,7 @@ void cz_get_settings(CZ* cz, ClientSettings* client_settings){
     // making your computer faster, colocating, booting faster
     client_settings->initial_wake = (u64)25*60*60*S_TO_NS;
     client_settings->processing_time = (u64)1 * S_TO_NS;
-    client_settings->net_latency = (u64)30000000000;
+    client_settings->net_latency = (u64)3000000000;
 
     // could be interesting to randomize these...
     client_settings->is_cash_account = 1;
