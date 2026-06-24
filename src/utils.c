@@ -3,8 +3,10 @@
 #include "types.h" 
 #include "constants.h" 
 #include "client_settings.h" 
+#include "rand.h" 
 
 u64 calculate_jitter(ClientSettings* cs, u64* rand){
+    rand_next(rand);
     u64 base_jitter = cs->net_latency;
     return 
         (base_jitter) + // 1.0x

@@ -15,6 +15,7 @@ typedef struct CZ {
     
     u32 cash_guess;
     u32 shares_guess;
+    u32 waiting_on_id;
 } CZ;
 
 CZ* cz_init();

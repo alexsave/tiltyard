@@ -82,8 +82,6 @@ void server_exec_end(ServerContext* sc) {
 
     u32 agro = in->client_id;
 
-    u8 will_modify_ob = 0;
-
     u32 before_quantity = in->quantity;
     u32 in_cost = before_quantity * in->price;
     u8 is_buy = (in->flags >> BUY_DIRECTION_BIT) & 1;
@@ -106,7 +104,6 @@ void server_exec_end(ServerContext* sc) {
     else 
         will_modify = has_shares & is_valid_quantity & is_valid_price;
 
-
     // for now we'll just handle socket connections
     if (is_toggle_ws) 
         cs->ws = !(cs->ws);
@@ -120,7 +117,6 @@ void server_exec_end(ServerContext* sc) {
     if(!is_buy && !has_shares) 
         printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
     */
-        
 
     u8 status = 0;
 
@@ -136,14 +132,6 @@ void server_exec_end(ServerContext* sc) {
 
         // mbo_dump + used to create next snapshot
         // us, plus at least the one who sent request?
-        u16 ref_count = 2;
-
-        // todo create l3 list later
-        for (u32 ci = 0; ci < ho->num_clients; ci++){
-            if((ci != in->client_id) && (client_settings[ci].ws)) {
-                ref_count++;
-            }
-        }
 
         u32 prev_last_mbo = sc->last_mbo;
         //if(exec_order_id > 2000000){
@@ -154,19 +142,20 @@ void server_exec_end(ServerContext* sc) {
         u32 partial_fill_id = MAX_U32;
         u32 partial_fill_q = 0;
 
-        sc->last_mbo = ob_limit(exec_order_id, orders, sc->last_mbo, mbo_bs, ref_count, fills, &partial_fill_id, &partial_fill_q);
+        sc->last_mbo = ob_limit(exec_order_id, orders, sc->last_mbo, mbo_bs, 1, fills, &partial_fill_id, &partial_fill_q);
 
         // ^ but this is just for our client of incoming order
         // we still need to go through and fill the orders we hit
         // just dont update the incoming order client after this "taker"
 
+        if (in->quantity == 0)
+            status |= (1 << FILL_BIT);
 
         // check exec_order_id to see if we had a partial fill
-        if (is_buy) {
-            client_settings[agro].reserved_cash += in->quantity * in->price;
-        } else {
-            client_settings[agro].reserved_shares += in->quantity;
-        }
+        if (is_buy) 
+            cs->reserved_cash += in->quantity * in->price;
+        else 
+            cs->reserved_shares += in->quantity;
 
         // ok now we have fills and partial_id maybe
         // partial id will be filled last by definiton
@@ -201,6 +190,14 @@ void server_exec_end(ServerContext* sc) {
                 mcs->cash -= cost;
                 mcs->reserved_cash -= cost;
             }
+
+            // Now this COULD create multiple responses for a single maker
+            bs_bump_refs(mbo_bs, sc->last_mbo);
+            Response r = {.client_id = maker, .snapshot_id = sc->last_mbo, .order_id = filled_order_id, .status= (1 << FILL_BIT)};
+            u32 response_id = fl_insert(responses, &r);
+            u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+            sch_schedule(sch, response_event, calculate_jitter(client_settings + maker, sc->rand)); 
+            client_settings[maker].will_notify = 1;
         }
 
         if (partial_fill_id != MAX_U32) {
@@ -232,39 +229,49 @@ void server_exec_end(ServerContext* sc) {
                 mcs->reserved_cash -= cost;
             }
 
+            bs_bump_refs(mbo_bs, sc->last_mbo);
+
+            // well it's LIKE a fill but not quite
+            // TODO add partial fill type
+            Response r = {.client_id = maker, .snapshot_id = sc->last_mbo, .order_id = partial_fill_id, .status= (1<<FILL_BIT)};
+            u32 response_id = fl_insert(responses, &r);
+            u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+            sch_schedule(sch, response_event, calculate_jitter(client_settings + maker, sc->rand)); 
+            client_settings[maker].will_notify = 1;
         }
 
         bs_get(mbo_bs, prev_last_mbo);
         //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
 
-        // accepted orders will modify this
-        //u32 server_snapshot = handle;
+        // ok one quick thing we can do is use client settings here to mark some clients as "will receive notification" 
+        // then skip them from teh general websocket blast
+        // and unmark them after
+
 
         // i know its ugly
         for (u32 ci = 0; ci < ho->num_clients; ci++){
-            if((ci != in->client_id) && (client_settings[ci].ws)) {
-                //printf("making response for %u\n", ci);
-                // make a new response for them
-                Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32, .status=0};
-                u32 response_id = fl_insert(responses, &r);
-                u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+            if (client_settings[ci].will_notify == 0){
+                if((ci != in->client_id) && (client_settings[ci].ws)) {
+                    //printf("making response for %u\n", ci);
+                    // make a new response for them
+                    bs_bump_refs(mbo_bs, sc->last_mbo);
+                    Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32, .status=0};
+                    u32 response_id = fl_insert(responses, &r);
+                    u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
 
-                //.. delay is tricky, we actually need to go get client values again
-                // probably using holder.
-                // but for now let's just say exactly 100ms lol
-                sch_schedule(sch, response_event, calculate_jitter(client_settings + (ci), sc->rand)); 
-                rand_next(sc->rand);
+                    sch_schedule(sch, response_event, calculate_jitter(client_settings + ci, sc->rand)); 
+                }
+            } else {
+                // reset
+                client_settings[ci].will_notify = 0;
             }
         }
 
         // send special one to self
+        bs_bump_refs(mbo_bs, sc->last_mbo);
         Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id, .status=status};
         u32 response_id = fl_insert(responses, &r);
         u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-
-        //.. delay is tricky, we actually need to go get client values again
-        // probably using holder.
-        // but for now let's just say exactly 100ms lol
         sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand)); 
 
     } else {

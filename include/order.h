@@ -87,6 +87,7 @@ static const u8 HAS_STOP_BIT = 5;
 static const u8 OCO_BIT = 4;
 static const u8 WS_BIT = 3;
 static const u8 PING_BIT = 2;
+static const u8 FILL_BIT = 1;
 static const u8 REJECT_BIT = 0;
 
 // wait til you hear about cancel-replace orders you will shit brix

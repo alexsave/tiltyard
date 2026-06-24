@@ -14,6 +14,9 @@
 
 // $$, initial wake, processing time, latency
 typedef struct ClientSettings {
+    // used in ob modification to signify a special response will be sent
+    u8 will_notify; 
+
     u8 ws; 
     u8 is_cash_account;
     u32 cash;

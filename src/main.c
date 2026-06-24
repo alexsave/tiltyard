@@ -32,7 +32,7 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 1000;
+    client_allocations[tm->cz_index] = 2;
     client_allocations[tm->co_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
@@ -114,10 +114,11 @@ int main(int argc, char* argv[]){
             u32 new_order_id = fl_insert(orders, &tmp);
             Order* empty = fl_get(orders, new_order_id);
 
+            context->next_order_id = new_order_id;
             context->next_order_ptr = empty;
 
             context->status = status;
-
+            
             if ((status >> PING_BIT) & 1) {
                 // the client can schedule these from themselves kinda
                 // so this will not come with any knowledge of snapshot
@@ -137,6 +138,16 @@ int main(int argc, char* argv[]){
             // ok they read the response order id, if it's rejected free it as its useless
             if ((context->status >> REJECT_BIT) & 1) {
                 fl_release(orders, response.order_id);
+            }
+
+            // or an order was filled, in which case we can also free it now that they've read it
+            if ((status >> FILL_BIT) & 1){
+                if (((Order*)fl_get(orders, response.order_id))->quantity == 0){
+                    //printf("full fill on %u\n", response.order_id);
+                    fl_release(orders, response.order_id);
+                } else {
+                    //printf("partial fill %u\n", response.order_id);
+                } 
             }
 
 
