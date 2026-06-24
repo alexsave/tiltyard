@@ -22,11 +22,14 @@ char* cz_get_name(CZ* cz) {
 }
 
 u8 cz_on_snapshot(CZ* cz, Context* ctx){
-    u8 make_order = 0;
 
     u8 is_ws = ((ctx->status) >> WS_BIT) & 1;
     u8 is_rej = ((ctx->status) >> REJECT_BIT) & 1;
     u8 is_broadcast = ctx->order_id == MAX_U32;
+
+    // or we try something different - ignroe broadcasts
+    if(is_broadcast)
+        return 0;
 
     // broadcast and is ws and is rej impossible
     // broadcast and is ws and not rej - impossible
@@ -37,10 +40,10 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     // not broadcast and not ws and not rej - trade went through, do nothing
     // not broadcast and not ws and is rej - rejection, undo effect of the trade, try again under constriaints
 
-    if (!is_broadcast && !is_ws && !is_rej){
+    //if (!is_ws && !is_rej){
         // Trade went through, do nothing
-        return 0;
-    }
+        //return 0;
+    //}
 
     if (!is_ws && is_rej) {
         // undo effect of the trade
@@ -73,12 +76,12 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
 
     if ((order_ptr->flags >> BUY_DIRECTION_BIT) & 1) {
         // keep it simpel for now 
-        if (cz->cash_guess < order_ptr->price * order_ptr->quantity)
-            return is_ws;
+        //if (cz->cash_guess < order_ptr->price * order_ptr->quantity)
+            //return is_ws;
         cz->cash_guess -= order_ptr->price * order_ptr->quantity;
     } else {
-        if (cz->shares_guess < order_ptr->quantity)
-            return is_ws;
+        //if (cz->shares_guess < order_ptr->quantity)
+            //return is_ws;
         cz->shares_guess -= order_ptr->quantity;
     }  
 
