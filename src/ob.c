@@ -240,8 +240,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, mbo_handle);
     MBO* old_mbo = (MBO*)old_mbo_raw;
 
-    i16 hi_bid_index = old_mbo->hi_bid_index;
-    i16 lo_ask_index = hi_bid_index + 1;
+    u16 hi_bid_index = old_mbo->hi_bid_index;
+    u16 lo_ask_index = hi_bid_index + 1;
 
     u16 start_search;
     i16 multiplier = 0;
