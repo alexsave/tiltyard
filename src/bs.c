@@ -105,7 +105,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
         // |   [last ---- last+size] [size ---- size] ... [first --- first+size]
         //printf("first offset %d, last offset %d, last size %d, size %d\n", first.offset, last.offset, last.size, size);
         if (first.offset < last.offset + last.size + size){
-            printf("doubling time\n");
+            printf("bs doubling time\n");
 
             bs->store_capacity = bs->store_capacity << 1;
             
@@ -118,7 +118,7 @@ uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder
                 // copy it to new array and update offset in the metadata
                 memcpy(&(doubled[current_start]), &(bs->store[bs->metadata[i].offset]), bs->metadata[i].size);
 
-                printf("shifting block that was at %d to %d\n", bs->metadata[i].offset, current_start);
+                //printf("shifting block that was at %d to %d\n", bs->metadata[i].offset, current_start);
                 bs->metadata[i].offset = current_start;
                 current_start = current_start + bs->metadata[i].size;
         

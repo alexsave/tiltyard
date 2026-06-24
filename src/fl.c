@@ -38,7 +38,7 @@ uint32_t fl_insert(FL* fl, void* data) {
     if (fl->sp == fl->id_limit) {
         // really we won't be checking max_u32, we will be checking for this log
         // if it appears we will fix things to avoid it
-        printf("reached id limit, rearchitect freelist\n");
+        printf("reached id limit, rearchitect freelist, %u\n", fl->id_limit);
         exit(1);
         return MAX_U32;
     }
