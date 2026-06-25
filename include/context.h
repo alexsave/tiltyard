@@ -9,11 +9,11 @@ typedef struct Context {
     // same thing here, both needed
     u32 order_id; // the order this response is for. MAX_U32 for broadcasts?
     Order* response_order_ptr;
+    u8 status; // status of ^THIS order
 
     u32 next_order_id;
     Order* next_order_ptr;
     u32 random;
-    u8 status; // status of ^THIS order
 } Context;
 
 #endif

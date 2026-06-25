@@ -86,6 +86,14 @@ void server_exec_end(ServerContext* sc) {
     u32 in_cost = before_quantity * in->price;
     u8 is_buy = (in->flags >> BUY_DIRECTION_BIT) & 1;
 
+    // next big challenge cancelreplace orders
+    // so now we need like a cancel id to bundle into this
+    // may as well use the padding we have
+
+    // and we needyet another flag
+    // more interestingly, what will this look like in the actual OB
+
+
     ClientSettings* cs = (client_settings + agro);//?
 
     u8 has_bp = (cs->cash - cs->reserved_cash) >= in_cost;

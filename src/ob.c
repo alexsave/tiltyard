@@ -223,6 +223,29 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     u16 price = in->price;
     u32 quantity = in->quantity;
 
+    // if we have cancelreplace trade, all this gets fucked
+    // the replace part of it can just be thought of as a regular order
+    // but now on top of all this we need to be constantly vigilant of the canclled order
+    // which could possibly wipe a level
+    // we have a shortcut in that we can check the order price
+    // if the cancel order price is not in teh index, it doesnt exist
+    // also if the cancel order client id does not match the requester client id, it's probably already filled or an invalid request
+    // they should've had a chance to see that their order was rejected or filled or whatever
+    // and we can check index offset to see if their cancel is in the level it says its in
+    // if the id is not there, we can skip the cancel part
+
+    // now lets say it is there
+    // wtf do we do
+    // 2 options
+    // 1 - decrease the index level q by order q, decrement level order count by 1, update offsets accordingly
+    // 2 - wipe out the level, update hi_bid_index accordingly, update level size, update offset accordingly
+
+    // actually there's a third
+    // if they want to cancel and replace AT THE SAME PRICE, that's a modify
+    // we can allow them to shrink size but nothing else
+    // this one is actually much easier and we just swap the order id in the OB without changing size at all, but we do need to update level quantity
+    // let me sleep on this
+
     // step one - calculate max possible new mbo size
     u32 old_size = mbo_bs->metadata[mbo_handle].size;
     u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
