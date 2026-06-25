@@ -120,22 +120,6 @@ void mbo_copy_level(MBORunner* old, MBORunner* new){
 
 // copy append
 void mbo_copapp_level(MBORunner* old, MBORunner* new, u32 order_id, u32 quantity) {
-    // curerenlty we do it pretty dumb where we copy the whole thing, then go back
-    // actually not that dumb nvm
-    // ok
-    /*MBOIndex* mboi = old->metadata;
-
-      new->metadata->price = mboi->price;
-      new->metadata->quantity = mboi->quantity;
-      new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
-
-      MBOLevel* old_run = old->level;
-
-    // techincally &(oldrun) == &(oldrun->order_Count)
-    // but maybe not something to rely on
-    u16 old_size = _mbo_level_size(old_run->order_count);
-    memcpy(new->level, old_run, old_size);*/
-
     mbo_copy_level(old, new);
 
     // AND THEN
@@ -153,6 +137,18 @@ void mbo_copapp_level(MBORunner* old, MBORunner* new, u32 order_id, u32 quantity
         exit(1);
     }
 }
+
+void mbo_insert_level(MBORunner* new, u32 order_id, u16 price, u32 quantity) {
+    new->metadata->price = price;
+    new->metadata->quantity = quantity;
+    new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
+    
+    MBOLevel* level = new->level;
+    level->order_count = 1;
+    level->entries[0].order_id = order_id;
+    level->entries[0].quantity = quantity;
+}
+
 
 // this COULD return somethign based on if we have more or not
 void mbo_jump(MBORunner* run) {
@@ -186,32 +182,6 @@ void _copy_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16
     *new_run = (*new_run) + old_size;
 
     *new_current_level = *new_current_level + 1;
-}
-
-void _append_to_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo, u16* new_current_level, void** new_run, u32 order_id, u32 quantity){
-    // first copy the level
-    // then go back and do this, then finally jump properly
-
-    // save our spot
-    MBOLevel* mbol = (MBOLevel*)(*new_run);
-    _copy_level_and_jump(old_mbo, old_current_level, new_mbo, new_current_level, new_run);
-
-    // jump to where we need to write the new order id
-    // this is now broken
-    //subtle fix
-    MBOEntry* ptr = (MBOEntry*)(((void*)mbol) + _mbo_level_size(mbol->order_count));
-    ptr->order_id = order_id;
-
-    mbol->order_count++;
-
-    // now jump to where we need to be for the next order level
-    *new_run = ((void*)mbol) + _mbo_level_size(mbol->order_count);
-
-    new_mbo->levels[old_current_level].quantity += quantity;
-    if (new_mbo->levels[old_current_level].quantity == 0){
-        mbo_dump(old_mbo);
-        exit(1);
-    }
 }
 
 // not reliant on old at all, this is a new row
@@ -558,10 +528,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         // now we know the size of MBOIndex at least
 
         new_mbo->hi_bid_index = old_mbo->hi_bid_index;
-        if (direction == 1 && !price_level_exists){
-            //printf("buy with no existing price level, bumping hi bid index to %u\n", new_mbo->hi_bid_index + 1);
-            //printf("old was %u\n", old_mbo->hi_bid_index);
-
+        if (direction == 1 && !price_level_exists) {
             new_mbo->hi_bid_index++;
         }
 
@@ -571,70 +538,43 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         void* new_run = _data_start(new_mbo_raw);
 
+        MBORunner * old_runner = mbor_init(old_mbo);
+        MBORunner * new_runner = mbor_init(new_mbo);
+
         if (price_level_exists) {
-            if (0) {
-                for (u16 old_current_level = 0; old_current_level < new_mbo->level_count;) {
-                    if (old_current_level == match_level) 
-                        _append_to_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run, order_id, quantity);
-                    else 
-                        _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run);
-                }
-            } else {
-                mbo_dump(old_mbo);// there lets see how it evolves
-                MBORunner * old_runner = mbor_init(old_mbo);
-                MBORunner * new_runner = mbor_init(new_mbo);
-                for (u16 old_current_level = 0; old_current_level < new_mbo->level_count; old_current_level++) {
-                    if (old_current_level == match_level) 
-                        mbo_copapp_level(old_runner, new_runner, order_id, quantity);
-                    else 
-                        mbo_copy_level(old_runner, new_runner);
-                    mbo_jump(old_runner);
-                    mbo_jump(new_runner);
-
-                    // no slipping thorugh the gaps
-                    mbo_dump(new_mbo);// there lets see how it evolves
-               }
-
-
-                // experiemntal new obrunner path
-
-                // what EXACTLY are we doing?
-                // go through EVERY level of the old_mbo (new_mbo level count == old_mbo level count)
-                // and do either append to level + jump
-                // or copy level + jump
-                // so we also write the index
-                // how easy would it be if
-                //or
-
-                // let me write this up in a scratch file
-
-
+            for (u16 i = 0; i < new_mbo->level_count; i++) {
+                if (i == match_level) 
+                    mbo_copapp_level(old_runner, new_runner, order_id, quantity);
+                else 
+                    mbo_copy_level(old_runner, new_runner);
+                mbo_jump(old_runner);
+                mbo_jump(new_runner);
             }
-            mbo_dump(old_mbo);// there lets see how it evolves
-            printf(" -> \n");
-            mbo_dump(new_mbo);// there lets see how it evolves
-            exit(1);
+
         } else {
-            u16 new_current_level = 0;
-
             u8 found = 0;
-
-            for (u16 old_current_level = 0; old_current_level < old_mbo->level_count; old_current_level++) {
-
-                MBOIndex mboi = old_mbo->levels[old_current_level];
-
-                if (found == 0 && mboi.price > price) {
-                    _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, quantity, order_id);
+            for (u16 i = 0; i < old_mbo->level_count; i++) {
+                if (!found && old_runner->metadata->price > price){
+                    mbo_insert_level(new_runner, order_id, price, quantity);
+                    mbo_jump(new_runner);
                     found = 1;
                 }
-                _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &new_current_level, &new_run);
+                mbo_copy_level(old_runner, new_runner);
+                mbo_jump(old_runner);
+                mbo_jump(new_runner);
+            }
+            if (found == 0){
+                mbo_insert_level(new_runner, order_id, price, quantity);
+                mbo_jump(new_runner);
             }
 
-            if(found == 0){
-                _insert_level_and_jump(new_mbo, &new_current_level, &new_run, price, quantity, order_id);
-            }
         }
     }
+
+    // even better, we have everythign we need to calculate actual_size
+    // as new_runner is left past the end due to jumps...
+    //actual_size = ((void*)(new_runner->level)) - new_mbo_raw;
+    // ah not yet
 
     void* new_data_start = _data_start(new_mbo_raw);
     if (new_mbo->level_count == 0) {
