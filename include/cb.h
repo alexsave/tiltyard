@@ -18,12 +18,13 @@ typedef struct CB {
     u16 start;
     u16 end;
     u16 capacity;
-    u32* buffer;
+    u16 type_size;
+    u8* buffer;
 } CB;
 
-CB* cb_init();
-void cb_queue(CB* cb, u32 value);
-u32 cb_deque(CB* cb);
+CB* cb_init(u16 type_size);
+void cb_queue(CB* cb, void* value);
+void* cb_deque(CB* cb);
 u8 cb_is_empty(CB* cb);
 void cb_free(CB* cb);
 

@@ -4,21 +4,23 @@
 #include "cb.h"
 #include "types.h"
 
-// this is just a circular buffer, hard coded to u32
+// this is just a circular buffer, free sizes
+// is it worth creating separate 64 bit vs 32 bit one?
 
-CB* cb_init() {
+CB* cb_init(u16 type_size) {
     CB* cb = malloc(sizeof(CB));
 
     cb->start = INITIAL_START_INDEX;
     cb->end = 0;
     cb->capacity = CB_INITIAL_CAPACITY;
+    cb->type_size = type_size;
 
-    cb->buffer = malloc(cb->capacity * sizeof(u32));
+    cb->buffer = malloc(cb->capacity * type_size);
 
     return cb;
 }
 
-void cb_queue(CB* cb, u32 value) {
+void cb_queue(CB* cb, void* value) {
     //printf("queue requested %u\n", value);
     if (cb->start == INITIAL_START_INDEX) {
         // bit of a trick 
@@ -30,12 +32,12 @@ void cb_queue(CB* cb, u32 value) {
             return;
         }
 
-        u32* doubled = malloc(2 * cb->capacity * sizeof(u32));
+        u32* doubled = malloc(2 * cb->capacity * cb->type_size);
 
         // copy start to capacity
-        memcpy(doubled, &(cb->buffer[cb->start]), (cb->capacity - cb->start) * sizeof(u32));
+        memcpy(doubled, &(cb->buffer[cb->start]), (cb->capacity - cb->start) * cb->type_size);
         // copy zero to end
-        memcpy(&(doubled[cb->capacity - cb->start]), cb->buffer, (cb->end) * sizeof(u32));
+        memcpy(&(doubled[cb->capacity - cb->start]), cb->buffer, (cb->end) * cb->type_size);
 
         free(cb->buffer);
         cb->buffer = doubled;
@@ -45,15 +47,20 @@ void cb_queue(CB* cb, u32 value) {
         cb->capacity <<= 1;
     }
 
-    cb->buffer[cb->end] = value;
+    for (uint8_t i = 0; i < cb->type_size; i++) {
+        cb->buffer[(cb->end*cb->type_size)+i] = *(uint8_t*)(value+i);
+    } 
+
+    //for (u8 i = 0; i < cb->type_size; i++)
+        //cb->buffer[cb->end] = value;
     cb->end = (cb->end + 1) % cb->capacity;
 }
 
-u32 cb_deque(CB* cb) {
+void* cb_deque(CB* cb) {
     if (cb->start == INITIAL_START_INDEX)
         return 0;
 
-    u32 result = cb->buffer[cb->start];
+    void* result = cb->buffer + cb->start * cb->type_size;
     cb->start = (cb->start + 1) % cb->capacity;
 
     if (cb->start == cb->end) {
