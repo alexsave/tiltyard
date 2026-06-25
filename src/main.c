@@ -108,7 +108,7 @@ int main(int argc, char* argv[]){
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
-            u8 status = response.status;
+            u16 status = response.status;
 
             Order tmp = {};
             u32 new_order_id = fl_insert(orders, &tmp);
@@ -118,6 +118,7 @@ int main(int argc, char* argv[]){
             context->next_order_ptr = empty;
 
             context->status = status;
+            context->quantity_filled = response.quantity_filled;
             
             if ((status >> PING_BIT) & 1) {
                 // the client can schedule these from themselves kinda
@@ -128,8 +129,9 @@ int main(int argc, char* argv[]){
             } else {
                 context->mbo_snapshot = bs_get(mbo_bs, snapshot_id);
                 context->order_id = response.order_id;
-                if (response.order_id != MAX_U32)
-                    context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
+                // they cant use it anyways
+                //if (response.order_id != MAX_U32)
+                    //context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
             }
 
             // wait a minute, will this go out of scope. hopefully not
@@ -141,15 +143,13 @@ int main(int argc, char* argv[]){
             }
 
             // or an order was filled, in which case we can also free it now that they've read it
-            if ((status >> FILL_BIT) & 1){
-                if (((Order*)fl_get(orders, response.order_id))->quantity == 0){
-                    //printf("full fill on %u\n", response.order_id);
-                    fl_release(orders, response.order_id);
-                } else {
-                    //printf("partial fill %u\n", response.order_id);
-                } 
-            }
 
+            if ((status >> FILL_BIT) & 1){
+                if ((status >> PARTIAL_FILL_BIT) & 1) {
+                } else {
+                    fl_release(orders, response.order_id);
+                }
+            }
 
             if (action == 0) {
                 //printf("reeasing order id\n");

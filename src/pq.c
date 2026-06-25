@@ -25,11 +25,6 @@ PQ* pq_init() {
 // this assumed that priority is either entire event, or top bits of event
 // something in here is fucked
 void pq_push(PQ* pq, uint64_t event) {
-    u8 debug = 0;
-    //if (event == 17210121269605826586){
-    //printf("scheduling into pq %llu\n", event);
-        //debug = 1;
-    //}
 
     // we are restricted by limits of current 
     if (pq->current == MAX_U32) {

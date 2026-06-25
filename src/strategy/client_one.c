@@ -29,8 +29,8 @@ u8 co_on_snapshot(CO* cz, Context* ctx){
 
     Order* order_ptr = ctx->next_order_ptr;
     // randomly choose between buy and sell
-    order_ptr->flags = ((ctx->random >>25) & 1) << BUY_DIRECTION_BIT;
-    //order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
+    order_ptr->status = ((ctx->random >>25) & 1) << BUY_DIRECTION_BIT;
+    //order_ptr->status = (ctx->random & 1) << BUY_DIRECTION_BIT;
 
 
     order_ptr->price = (ctx->random >> 8 )& MAX_U16;

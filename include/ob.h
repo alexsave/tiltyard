@@ -68,7 +68,7 @@ typedef struct MBP {
     MBPLevel levels[];
 } MBP;
 
-u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count, CB* fills, u32* partial_fill_id, u32* partial_fill_q);
+u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills);
 void mbo_dump(void* mbo_raw);
 
 #endif

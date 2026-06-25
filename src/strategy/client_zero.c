@@ -77,7 +77,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
         // luckily we dont need to change teh ENTIRE signature, we can just update context
 
         Order* last = ctx->response_order_ptr;
-        if ((last->flags >> BUY_DIRECTION_BIT) & 1) {
+        if ((last->status >> BUY_DIRECTION_BIT) & 1) {
             // keep it simpel for now
             cz->cash_guess += last->price * last->quantity;
         } else {
@@ -89,14 +89,14 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     // so try agian under constraints
     
     Order* order_ptr = ctx->next_order_ptr;
-    order_ptr->flags = (ctx->random & 1) << BUY_DIRECTION_BIT;
+    order_ptr->status = (ctx->random & 1) << BUY_DIRECTION_BIT;
 
     order_ptr->price = (ctx->random & MAX_U16) >> 3;
     order_ptr->quantity = ((ctx->random & MAX_U8) >> 3) + 1;
 
     if (is_ping) {
         // switch to sw
-        //order_ptr->flags |= (1 << WS_BIT);
+        //order_ptr->status |= (1 << WS_BIT);
         // should only be like 5 of these
     }
 
@@ -106,7 +106,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     // as main.c has the data RIGHT NOW telling us how much we have
     // this is more realistic
 
-    if ((order_ptr->flags >> BUY_DIRECTION_BIT) & 1) {
+    if ((order_ptr->status >> BUY_DIRECTION_BIT) & 1) {
         // keep it simpel for now 
         //if (cz->cash_guess < order_ptr->price * order_ptr->quantity)
             //return is_ws;

@@ -8,7 +8,7 @@
 #include "bs.h"
 #include "cb.h"
 #include "order.h"
-#include "fl.h"
+#include "fill.h"
 
 void* _data_start(void* mbo_raw){
     return mbo_raw + sizeof(MBO) + ((MBO*)(mbo_raw))->level_count * sizeof(MBOIndex);
@@ -60,7 +60,7 @@ void mbo_dump(void* mbo_raw) {
             //printf("%u\n", *(u8*)(data_start+byte_offset+j));
         }
 
-        printf("%uc\t with %u orders\t", mboi.price, mbol->order_count);
+        printf("%uc\t with %u order count\t", mboi.price, mbol->order_count);
 
         // we crash right after this i think
 
@@ -68,11 +68,6 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
         for (u16 j = 0; j < mbol->order_count; j++) {
-            u32 oid = mbol->entries[j].order_id;
-            //if (oid > 43440){
-            //printf("some ridiculously large id value already\n");
-            //exit(1);
-            //}
             printf("%ush #%u\t", mbol->entries[j].quantity, mbol->entries[j].order_id);
         }    
         printf("\n");
@@ -155,7 +150,7 @@ void mbo_to_index(MBORunner* run, u16 index) {
     run->level = ((void*)(run->data_start)) + run->metadata->byte_offset;
 }
 
-void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity) {
+void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity, CB* fills) {
     new->metadata->price = old->metadata->price;
     new->metadata->quantity = old->metadata->quantity - remaining_quantity;
     new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
@@ -168,28 +163,30 @@ void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 rema
 
     u16 i = 0;
     for (; i < mod_level->order_count; i++) {
-        u32 prev_order_id = mod_level->entries[i].order_id;
-        //Order* prev_order = (Order*)fl_get(orders, prev_order_id);
         // that's what we USED to do. but really we just modify the order book here
-        // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the orders themselves
+        // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the order themselves
         // which also solves the whole partial thing
         
         MBOEntry * prev_order = mod_level->entries + i;
-    
+        u32 prev_order_id = prev_order->order_id;
         u32 order_quantity = prev_order->quantity;
+
         if (order_quantity > remaining_quantity) {
             //prev_order->quantity -= remaining_quantity;
-            // CRTICALLY, SOMEHOW LOG THIS BACK TO SERVER.C
-            printf("PARTIAL FILL %u\n", remaining_quantity);
-            partial_fill = 1;
+            Fill f = {
+                .order_id = prev_order_id, 
+                .quantity_filled = remaining_quantity, 
+                .partial = 1};
+            cb_queue(fills, &f);
             break;
         } else {
-            printf("FILL %u\n", order_quantity);
-            // fill order entirely
+            // fill resting order entirely
             remaining_orders_on_level--;
             remaining_quantity -= order_quantity;
-            // ALSO GET THIS BACK TO SERVER.C
-            //cb_queue(fills, prev_order_id);
+            Fill f = {
+                .order_id = prev_order_id, 
+                .quantity_filled = order_quantity};
+            cb_queue(fills, &f);
         }
     }
 
@@ -231,9 +228,8 @@ void mbo_jump(MBORunner* run) {
 
 // fill holder for the trades we make
 // it's not up to this OB modifier to handle fills just to log them really
-u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count, CB* fills, u32* partial_fill_id, u32* partial_fill_q) {
-    Order* in = (Order*)fl_get(orders, order_id);
-    u8 direction = (in->flags >> BUY_DIRECTION_BIT) & 1;
+u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills) {
+    u8 direction = (in->status >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
     u32 quantity = in->quantity;
 
@@ -267,7 +263,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     u32 actual_size = max_new_size;
 
     void* new_mbo_raw;
-    u32 unused = bs_reserve(mbo_bs, max_new_size, ref_count, &new_mbo_raw);
+    u32 unused = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
@@ -354,10 +350,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 void* old_run = (_data_start((void*)old_mbo) + mboi.byte_offset);
 
                 MBOLevel* mod_level = (MBOLevel*)old_run;
-                u32 remaining_orders_on_level = mod_level->order_count;
                 for (u16 i = 0; i < mod_level->order_count; i++) {
-                    u32 prev_order_id = mod_level->entries[i].order_id;
-                    cb_queue(fills, &prev_order_id);
+                    Fill f = {
+                        .order_id = mod_level->entries[i].order_id,
+                        .quantity_filled = mod_level->entries[i].quantity};
+                    cb_queue(fills, &f);
                 }
 
             }
@@ -402,9 +399,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         new_mbo->level_count = (lowest_untouched_index - 0) + (old_mbo->level_count - highest_untouched_index - 1) + (partial_fill | modified_level);
 
-        void* new_run = _data_start(new_mbo_raw);
-        //printf("got new run\n");
-
         // CHANGING TO EXCLUSIVE
 
         new_runner = mbor_init(new_mbo);
@@ -428,7 +422,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             if (direction == 1) 
                 //buy, we just updated highest bid
                 new_mbo->hi_bid_index = new_current_level;
-             else 
+            else 
                 //sell, we just updated lowest ask
                 new_mbo->hi_bid_index = new_current_level - 1;
 
@@ -443,12 +437,12 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 new_mbo->hi_bid_index = new_current_level - 1;
             else 
                 new_mbo->hi_bid_index = new_current_level;
-            
+
             // first lets get the oldrunner in the right mindset
             mbo_to_index(old_runner, modified_level_index);
 
-            mbo_partial_fill_insert(old_runner, new_runner, price, remaining_quantity);
-            
+            mbo_partial_fill_insert(old_runner, new_runner, price, remaining_quantity, fills);
+
             mbo_jump(new_runner);
         } 
 
@@ -495,7 +489,6 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         if (!price_level_exists)
             new_mbo->level_count++;
 
-        void* new_run = _data_start(new_mbo_raw);
 
         new_runner = mbor_init(new_mbo);
 
@@ -534,19 +527,11 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     actual_size = ((void*)(new_runner->level)) - new_mbo_raw;
     // ah not yet
 
-    /*void* new_data_start = _data_start(new_mbo_raw);
-    if (new_mbo->level_count == 0) {
-        actual_size = new_data_start - new_mbo_raw;
-    } else {
-        void* mbol = new_mbo->levels[new_mbo->level_count-1].byte_offset + new_data_start;
-        actual_size = (mbol + _mbo_level_size(((MBOLevel*)mbol)->order_count)) - new_mbo_raw;
-    }*/
-
     mbo_dump(new_mbo);
 
     // much much later
     u8 resize_status = bs_resize(mbo_bs, actual_size);
-    if (order_id == 14/*resize_status*/){
+    if (order_id == 24/*resize_status*/){
         u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
         printf("predicted size was %u, then requested to resize to %U\n", max_new_size, actual_size);
         printf("old mbo\n");
