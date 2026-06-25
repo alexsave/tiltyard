@@ -70,7 +70,7 @@ typedef struct MBP {
 
 // now returns actual size instead of the new handle. bs is handled by server
 u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_raw);
-u32 ob_execute(CB* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
+u32 ob_execute(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 void mbo_dump(void* mbo_raw);
 
 #endif

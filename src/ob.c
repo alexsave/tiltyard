@@ -151,6 +151,7 @@ void mbo_to_index(MBORunner* run, u16 index) {
 }
 
 void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity, CB* fills) {
+    // it warns we dont use price. shoudl we?
     new->metadata->price = old->metadata->price;
     new->metadata->quantity = old->metadata->quantity - remaining_quantity;
     new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
@@ -267,6 +268,7 @@ u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_
     // it's on level i, level_wipe indicated
     MBO* new_mbo = (MBO*)new_mbo_raw;
     new_mbo->level_count = old_mbo->level_count;
+    new_mbo->hi_bid_index = old_mbo->hi_bid_index;
     
     u8 level_wipe = 0;
     u16 i = 0;
@@ -275,6 +277,10 @@ u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_
             if (old_mbo->levels[i].quantity == to_cancel->quantity){
                 level_wipe = 1;
                 new_mbo->level_count--;
+
+                // one last check
+                if (old_mbo->hi_bid_index != MAX_U16 && i <= old_mbo->hi_bid_index) 
+                    new_mbo->hi_bid_index--;
             }
             break;
         }
@@ -309,7 +315,7 @@ u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_
 // fill holder for the trades we make
 // it's not up to this OB modifier to handle fills just to log them really
 // not just limits, everythign
-u32 ob_execute(CB* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
+u32 ob_execute(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
     Order* in = fl_get(orders, order_id);
 
     // cancel is checked elsehwere

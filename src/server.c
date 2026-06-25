@@ -65,12 +65,8 @@ void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantit
 void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
     ClientSettings* client_settings = sc->client_settings;
     BS* mbo_bs = sc->mbo_bs;
-    SCH* sch = sc->sch;
     Holder* ho = sc->ho;
-    FL* responses = sc->responses;
     FL* orders = sc->orders;
-    CB* fills = sc->fills;
-    u64 now_ns = sch_now_ns(sch);
 
     Order* in = (Order*)fl_get(orders, exec_order_id);
     u8 status = 0;
@@ -170,7 +166,7 @@ void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
         ClientSettings* cs = sc->client_settings + i;
         printf("from client id #%u [$%u/$%u/%ush/%ush]\n", i, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
     }  
-    exit(1);
+    //exit(1);
 
 }
 
@@ -186,7 +182,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     BS* mbo_bs = sc->mbo_bs;
     SCH* sch = sc->sch;
     Holder* ho = sc->ho;
-    FL* responses = sc->responses;
     FL* orders = sc->orders;
     CB* fills = sc->fills;
     u64 now_ns = sch_now_ns(sch);
@@ -259,7 +254,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     if(!will_modify){
         status |= (1<<REJECT_BIT);
-        schedule_response(cs, in->client_id, status, 0, exec_order_id);
+        schedule_response(sc, in->client_id, status, 0, exec_order_id);
         return;
     }
 

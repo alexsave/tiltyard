@@ -32,7 +32,7 @@ void cb_queue(CB* cb, void* value) {
             return;
         }
 
-        u32* doubled = malloc(2 * cb->capacity * cb->type_size);
+        u8* doubled = malloc(2 * cb->capacity * cb->type_size);
 
         // copy start to capacity
         memcpy(doubled, &(cb->buffer[cb->start]), (cb->capacity - cb->start) * cb->type_size);
