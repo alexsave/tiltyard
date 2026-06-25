@@ -150,7 +150,27 @@ void server_exec_end(ServerContext* sc) {
 
         // this WILL modify the in Order, to modify quantity
         // it's either that or we mess with the return value somehow
-        sc->last_mbo = ob_limit(exec_order_id, in, sc->last_mbo, mbo_bs, fills);
+
+        // actually we can make this more simple by handling bs here
+        
+        u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
+        // new resting order on new price level, requring an additional index, additional level header, and additional level entry
+        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
+
+        void* new_mbo_raw;
+        u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
+        void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
+
+        u32 new_size = ob_execute(exec_order_id, in, old_mbo_raw, new_mbo_raw, fills);
+        if (exec_order_id == 24){
+            mbo_dump(old_mbo_raw);
+            mbo_dump(new_mbo_raw);
+            exit(1);
+        }
+
+        sc->last_mbo = next_last_mbo;
+
+        bs_resize(mbo_bs, new_size);
 
         // ^ but this is just for our client of incoming order
         // we still need to go through and fill the orders we hit

@@ -228,7 +228,7 @@ void mbo_jump(MBORunner* run) {
 
 // fill holder for the trades we make
 // it's not up to this OB modifier to handle fills just to log them really
-u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills) {
+u32 ob_execute(u32 order_id, Order* in, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
     u8 direction = (in->status >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
     u32 quantity = in->quantity;
@@ -257,20 +257,20 @@ u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills) {
     // let me sleep on this
 
     // step one - calculate max possible new mbo size
-    u32 old_size = mbo_bs->metadata[mbo_handle].size;
-    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
+    //u32 old_size = mbo_bs->metadata[mbo_handle].size;
+    //u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
 
-    u32 actual_size = max_new_size;
+    //u32 actual_size = max_new_size;
 
-    void* new_mbo_raw;
-    u32 unused = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
+    //void* new_mbo_raw;
+    //u32 unused = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
 
     //printf("start of bs store at %p\n", mbo_bs->store);
     //printf("new mbo at %p\n", new_mbo_raw);
 
-    void* old_mbo_raw = bs_get_no_ref(mbo_bs, mbo_handle);
+    //void* old_mbo_raw = bs_get_no_ref(mbo_bs, mbo_handle);
     MBO* old_mbo = (MBO*)old_mbo_raw;
     MBORunner * old_runner = mbor_init(old_mbo);
     MBORunner * new_runner;
@@ -524,22 +524,8 @@ u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills) {
 
     // even better, we have everythign we need to calculate actual_size
     // as new_runner is left past the end due to jumps...
-    actual_size = ((void*)(new_runner->level)) - new_mbo_raw;
     // ah not yet
 
-    mbo_dump(new_mbo);
-
-    // much much later
-    u8 resize_status = bs_resize(mbo_bs, actual_size);
-    if (order_id == 24/*resize_status*/){
-        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
-        printf("predicted size was %u, then requested to resize to %U\n", max_new_size, actual_size);
-        printf("old mbo\n");
-        mbo_dump(old_mbo);
-        printf("new mbo\n");
-        mbo_dump(new_mbo);
-        exit(1);
-    }
-    return unused;
+    return ((void*)(new_runner->level)) - new_mbo_raw;
 }
 

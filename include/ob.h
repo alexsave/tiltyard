@@ -68,7 +68,8 @@ typedef struct MBP {
     MBPLevel levels[];
 } MBP;
 
-u32 ob_limit(u32 order_id, Order* in, u32 mbo_handle, BS* mbo_bs, CB* fills);
+// now returns actual size instead of the new handle. bs is handled by server
+u32 ob_execute(u32 order_id, Order* in, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 void mbo_dump(void* mbo_raw);
 
 #endif

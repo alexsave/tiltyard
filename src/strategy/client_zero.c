@@ -77,7 +77,6 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     if (!is_ws && is_rej) {
         // undo effect of the trade
         // OH hold on we need the Order itself
-        // luckily we dont need to change teh ENTIRE signature, we can just update context
 
         // not allowed to do this
         /*Order* last = ctx->response_order_ptr;
@@ -97,6 +96,12 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
 
     order_ptr->price = (ctx->random & MAX_U16) >> 3;
     order_ptr->quantity = ((ctx->random & MAX_U8) >> 3) + 1;
+
+    if ((ctx->random & MAX_U8) > 200) {
+        // try to cancel somestimes, specifically the one in response to this
+        order_ptr->status |= (1 << CANCEL_BIT);
+        order_ptr->other_id = ctx->order_id;
+    }
 
     if (is_ping) {
         // switch to sw

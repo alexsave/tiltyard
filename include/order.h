@@ -30,6 +30,7 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // ok we can work with this
 // could probably all be put in it's own class tbh 
 // yeah why not 
+static const u8 CANCEL_BIT = 9;
 static const u8 PARTIAL_FILL_BIT = 8;
 static const u8 BUY_DIRECTION_BIT = 7;
 static const u8 IS_LIMIT_BIT = 6; // otherwise market
@@ -48,11 +49,12 @@ typedef struct Order {
     u16 quantity; // up to 65K stocks at a time, update if we have whales
     u16 price;
     u16 stop_price;
+
     u32 client_id;
 
-    //smh trust me you want to align to 8 bytes
-    u8 paddingA;
-    u64 paddingB;
+    // order id for replace or cancel 
+    u32 other_id;
+    //smh trust me you want to align to 8 bytes, but it'll do it automatically
 } Order;
 
 #endif
