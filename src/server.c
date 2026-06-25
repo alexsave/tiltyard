@@ -171,7 +171,8 @@ void server_exec_end(ServerContext* sc) {
             u32 filled_order_id = cb_deque(fills);
             // its filled, we dont need it anymore I think
             // we could probably release, but it's confusing right now
-            Order* order = (Order*)fl_release(orders, filled_order_id);
+            //printf("order releasing due to fill %u\n", filled_order_id);
+            Order* order = (Order*)fl_get(orders, filled_order_id);
 
             printf("TRADE %u %u %u %u %llu\n", (in->flags >> BUY_DIRECTION_BIT) & 1, order->price, order->quantity, filled_order_id, now_ns);
 
