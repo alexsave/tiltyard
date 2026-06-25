@@ -73,7 +73,7 @@ void mbo_dump(void* mbo_raw) {
             //printf("some ridiculously large id value already\n");
             //exit(1);
             //}
-            printf("#%u\t", mbol->entries[j].order_id);
+            printf("%ush #%u\t", mbol->entries[j].quantity, mbol->entries[j].order_id);
         }    
         printf("\n");
     }
@@ -88,6 +88,80 @@ u32 _data_start_offset(u16 level_count) {
 
 u32 _mbo_level_size(u16 order_count) {
     return sizeof(MBOLevel) + order_count * sizeof(MBOEntry);
+}
+
+// hope that works
+MBORunner * mbor_init(MBO* mbo) {
+    MBORunner * mbor = malloc(sizeof(MBORunner));
+    
+    mbor->mbo = mbo;
+    mbor->metadata = mbo->levels;
+    // for this one, it's critical that level_count is initialized properly
+    mbor->data_start = (((void*)mbo) + _data_start_offset(mbo->level_count));
+    mbor->level = mbor->data_start;
+    mbor->index = 0;
+    return mbor;
+}
+
+void mbo_copy_level(MBORunner* old, MBORunner* new){
+    MBOIndex* mboi = old->metadata;
+
+    new->metadata->price = mboi->price;
+    new->metadata->quantity = mboi->quantity;
+    new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
+
+    MBOLevel* old_run = old->level;
+
+    // techincally &(oldrun) == &(oldrun->order_Count)
+    // but maybe not something to rely on
+    u16 old_size = _mbo_level_size(old_run->order_count);
+    memcpy(new->level, old_run, old_size);
+}
+
+// copy append
+void mbo_copapp_level(MBORunner* old, MBORunner* new, u32 order_id, u32 quantity) {
+    // curerenlty we do it pretty dumb where we copy the whole thing, then go back
+    // actually not that dumb nvm
+    // ok
+    /*MBOIndex* mboi = old->metadata;
+
+      new->metadata->price = mboi->price;
+      new->metadata->quantity = mboi->quantity;
+      new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
+
+      MBOLevel* old_run = old->level;
+
+    // techincally &(oldrun) == &(oldrun->order_Count)
+    // but maybe not something to rely on
+    u16 old_size = _mbo_level_size(old_run->order_count);
+    memcpy(new->level, old_run, old_size);*/
+
+    mbo_copy_level(old, new);
+
+    // AND THEN
+
+    // jump past to write the proper entry
+    MBOEntry* entry = (MBOEntry*)(((void*)(new->level)) + _mbo_level_size(new->level->order_count));
+    entry->order_id = order_id;
+    entry->quantity = quantity;
+    new->level->order_count++;
+
+    new->metadata->quantity += quantity;
+    if(new->metadata->quantity == 0) {
+        printf("quantity ended up 0\n");
+        mbo_dump(old->mbo);
+        exit(1);
+    }
+}
+
+// this COULD return somethign based on if we have more or not
+void mbo_jump(MBORunner* run) {
+    // the order_count MUST be written at this point
+    run->level = ((void*)run->level) + _mbo_level_size(run->level->order_count);
+    // if this is of type MBOIndex it will work right?
+    run->metadata++;
+    //naming is hard
+    run->index++;
 }
 
 void _write_level(MBO* new_mbo, u16 new_current_level, u16 price, u32 quantity, void* new_run){
@@ -123,8 +197,10 @@ void _append_to_level_and_jump(MBO* old_mbo, u16 old_current_level, MBO* new_mbo
     _copy_level_and_jump(old_mbo, old_current_level, new_mbo, new_current_level, new_run);
 
     // jump to where we need to write the new order id
-    u32* ptr = (u32*)(((void*)mbol) + _mbo_level_size(mbol->order_count));
-    *ptr = order_id;
+    // this is now broken
+    //subtle fix
+    MBOEntry* ptr = (MBOEntry*)(((void*)mbol) + _mbo_level_size(mbol->order_count));
+    ptr->order_id = order_id;
 
     mbol->order_count++;
 
@@ -496,12 +572,48 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
         void* new_run = _data_start(new_mbo_raw);
 
         if (price_level_exists) {
-            for (u16 old_current_level = 0; old_current_level < new_mbo->level_count;) {
-                if (old_current_level == match_level) 
-                    _append_to_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run, order_id, quantity);
-                else 
-                    _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run);
+            if (0) {
+                for (u16 old_current_level = 0; old_current_level < new_mbo->level_count;) {
+                    if (old_current_level == match_level) 
+                        _append_to_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run, order_id, quantity);
+                    else 
+                        _copy_level_and_jump(old_mbo, old_current_level, new_mbo, &old_current_level, &new_run);
+                }
+            } else {
+                mbo_dump(old_mbo);// there lets see how it evolves
+                MBORunner * old_runner = mbor_init(old_mbo);
+                MBORunner * new_runner = mbor_init(new_mbo);
+                for (u16 old_current_level = 0; old_current_level < new_mbo->level_count; old_current_level++) {
+                    if (old_current_level == match_level) 
+                        mbo_copapp_level(old_runner, new_runner, order_id, quantity);
+                    else 
+                        mbo_copy_level(old_runner, new_runner);
+                    mbo_jump(old_runner);
+                    mbo_jump(new_runner);
+
+                    // no slipping thorugh the gaps
+                    mbo_dump(new_mbo);// there lets see how it evolves
+               }
+
+
+                // experiemntal new obrunner path
+
+                // what EXACTLY are we doing?
+                // go through EVERY level of the old_mbo (new_mbo level count == old_mbo level count)
+                // and do either append to level + jump
+                // or copy level + jump
+                // so we also write the index
+                // how easy would it be if
+                //or
+
+                // let me write this up in a scratch file
+
+
             }
+            mbo_dump(old_mbo);// there lets see how it evolves
+            printf(" -> \n");
+            mbo_dump(new_mbo);// there lets see how it evolves
+            exit(1);
         } else {
             u16 new_current_level = 0;
 

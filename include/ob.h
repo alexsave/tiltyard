@@ -29,14 +29,31 @@ typedef struct MBO {
 
 typedef struct MBOEntry {
     // not used or filled out for now, but it's ready
-    u32 quantity;
     u32 order_id;
+    u32 quantity;
 } MBOEntry;
 
 typedef struct MBOLevel {
     u16 order_count;
     MBOEntry entries[];
 } MBOLevel;
+
+
+// what should we put in here
+
+// idk but it will be used in many internal methods
+typedef struct MBORunner {
+    //one to the start of the whole mbo
+    MBO* mbo;
+    //one to the index (mboi)
+    MBOIndex* metadata;
+    //one to the start of the level (mbol)
+    MBOLevel* level;
+    //one to the datastart
+    void* data_start;
+    //also current index
+    u16 index;
+} MBORunner;
 
 
 // maybe therse are enough maybe no
