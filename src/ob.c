@@ -357,7 +357,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 u32 remaining_orders_on_level = mod_level->order_count;
                 for (u16 i = 0; i < mod_level->order_count; i++) {
                     u32 prev_order_id = mod_level->entries[i].order_id;
-                    cb_queue(fills, prev_order_id);
+                    cb_queue(fills, &prev_order_id);
                 }
 
             }

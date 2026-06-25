@@ -16,6 +16,7 @@
 #include "holder.h"
 #include "ob.h"
 #include "rand.h"
+#include "fill.h"
 
 // yeah you need these two to initialize the server, cuz really it initalizes everything
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
@@ -36,12 +37,12 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     ((MBO*)mbo_address)->hi_bid_index = MAX_U16;
 
     sc->executing = 0;
-    sc->sw_queue = cb_init();
-    sc->hw_queue = cb_init();
-    sc->convert_holder = cb_init();
+    sc->sw_queue = cb_init(sizeof(u32));
+    sc->hw_queue = cb_init(sizeof(u32));
+    sc->convert_holder = cb_init(sizeof(u32));
 
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
-    sc->fills = cb_init();
+    sc->fills = cb_init(sizeof(Fill));
     sc->responses = fl_init(sizeof(Response), MAX_U32);
 
     sc->rand = rand_init(seed);
@@ -75,7 +76,7 @@ void server_exec_end(ServerContext* sc) {
     }
 
 
-    u32 exec_order_id = cb_deque(sw_queue);
+    u32 exec_order_id = *(u32*)cb_deque(sw_queue);
     //printf("exec finished on order %u\n", exec_order_id);
 
     Order* in = (Order*)fl_get(orders, exec_order_id);
@@ -168,7 +169,7 @@ void server_exec_end(ServerContext* sc) {
         // ok now we have fills and partial_id maybe
         // partial id will be filled last by definiton
         while (!cb_is_empty(fills)){
-            u32 filled_order_id = cb_deque(fills);
+            u32 filled_order_id = *(u32*)cb_deque(fills);
             // its filled, we dont need it anymore I think
             // we could probably release, but it's confusing right now
             //printf("order releasing due to fill %u\n", filled_order_id);
@@ -301,8 +302,8 @@ void server_exec_end(ServerContext* sc) {
        u64 SW_TO_EXEC_DELAY = 100;
        u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_TO_SW_ID & PARAM_MASK);
        sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
-       cb_queue(sc->convert_holder);
-       cb_queue(CONVERT_SENTINEL_VALUE);
+       cb_queue(&(sc->convert_holder));
+       cb_queue(&CONVERT_SENTINEL_VALUE);
 
      */
 
@@ -317,7 +318,7 @@ void server_exec_end(ServerContext* sc) {
 
 void server_arrival(ServerContext* sc, u32 order_id) {
     //printf("order %llu arrives at server\n", order_id);
-    cb_queue(sc->hw_queue, order_id);
+    cb_queue(sc->hw_queue, &order_id);
 
     u64 HW_TO_SW_DELAY = 10000;
     u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (HW_TO_SW_ID & PARAM_MASK);
@@ -352,7 +353,7 @@ void server_hw_to_sw(ServerContext* sc) {
         //weird
         return;
     }   
-    u32 moving_order = cb_deque(sc->hw_queue); 
+    u32 moving_order = *(u32*)cb_deque(sc->hw_queue); 
     // handle zero case
     //printf("hw to sw move requested for order %u\n", moving_order);
 
@@ -363,12 +364,11 @@ void server_hw_to_sw(ServerContext* sc) {
         sch_schedule(sc->sch, socket_event, SW_TO_EXEC_DELAY);
     }   
 
-    cb_queue(sc->sw_queue, moving_order);
-
+    cb_queue(sc->sw_queue, &moving_order);
 }
 
 void server_exec_to_sw(ServerContext* sc){
-    u32 synth_order_id = cb_deque(sc->convert_holder);
+    u32 synth_order_id = *(u32*)cb_deque(sc->convert_holder);
 
     if (cb_is_empty(sc->convert_holder) || synth_order_id == CONVERT_SENTINEL_VALUE) {
         return;
@@ -382,8 +382,8 @@ void server_exec_to_sw(ServerContext* sc){
 
     // this will pop the last CONVERT_SENTINEL_VALUE becuase we deque before we check
     while(!cb_is_empty(sc->convert_holder) && synth_order_id != CONVERT_SENTINEL_VALUE) {
-        cb_queue(sc->sw_queue, synth_order_id);
-        synth_order_id = cb_deque(sc->convert_holder);
+        cb_queue(sc->sw_queue, &synth_order_id);
+        synth_order_id = *(u32*)cb_deque(sc->convert_holder);
     }       
 
 }
