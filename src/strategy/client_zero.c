@@ -49,10 +49,10 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
         // go on, and wait for this next one
         cz->waiting_on_id = ctx->next_order_id;
     } else {
-        //printf("got %u but nope, still waiting on order %u\n", ctx->order_id, cz->waiting_on_id);
+        printf("got %u but nope, still waiting on order %u\n", ctx->order_id, cz->waiting_on_id);
         return 0;
     }
-    //printf("got %u finally, ok lets fill out order %u and send it off\n", ctx->order_id, cz->waiting_on_id);
+    printf("got %u finally, ok lets fill out order %u and send it off\n", ctx->order_id, cz->waiting_on_id);
 
     // or we try something different - ignroe broadcasts
     ////if(is_broadcast)

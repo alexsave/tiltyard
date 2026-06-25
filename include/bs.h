@@ -40,4 +40,9 @@ void* bs_get_no_ref(BS* bs, u32 bs_number);
 void* bs_get(BS* bs, uint32_t bs_number);
 void bs_bump_refs(BS* bs, uint32_t bs_number);
 
+// maybe do a 
+// for copying to blank OB
+// also default to refs 1
+//u32 bs_duplicate_last_size(BS* bs, void ** address_holder);
+
 #endif

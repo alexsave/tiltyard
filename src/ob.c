@@ -211,6 +211,30 @@ void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 rema
     }
 }
 
+// used for cancellations
+void mbo_splice_level(MBORunner* old, MBORunner* new, u32 cancel_id) {
+    new->metadata->price = old->metadata->price;
+    new->metadata->quantity = old->metadata->quantity; // for now
+    new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
+
+    MBOLevel* mod_level = old->level;
+
+    // copy in order entry by order entry except our guy
+    u16 j = 0;
+    for (u16 i = 0; i < mod_level->order_count; i++) {
+        MBOEntry * prev_order = mod_level->entries + i;
+        if (prev_order->order_id == cancel_id){
+            new->metadata->quantity -= prev_order->quantity;
+            continue;
+        }
+        new->level->entries[j].order_id = prev_order->order_id;
+        new->level->entries[j].quantity = prev_order->quantity;
+
+        j++;
+    }
+    new->level->order_count = mod_level->order_count - 1;
+}
+
 // this COULD return somethign based on if we have more or not
 void mbo_jump(MBORunner* run) {
     // the order_count MUST be written at this point
@@ -226,9 +250,70 @@ void mbo_jump(MBORunner* run) {
 // will need a change to bs
 // but not that hard, just need to update bs->metadata[(bs->md_end-1)%bs->md_capacity].size = size;
 
+// oh this is a bit confusing
+// but this first parameter order id is like "the cancel order"
+// the "order that will be cancelled" is in->other_id
+// in fact I dont even think we need 
+u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_raw) {
+    // ok this is much easier than anything
+
+    // the only level check we need to do is find the level of the cancel and see if it wipes
+    // easy index-only check : if quantity of order == quantity of level - wipe level, possibly updating hi_bid_index
+    // else modify
+    // copy all other levels
+    MBO* old_mbo = (MBO*)old_mbo_raw;
+    u16 cancel_price = to_cancel->price;
+
+    // it's on level i, level_wipe indicated
+    MBO* new_mbo = (MBO*)new_mbo_raw;
+    new_mbo->level_count = old_mbo->level_count;
+    
+    u8 level_wipe = 0;
+    u16 i = 0;
+    for (; i < old_mbo->level_count; i++){
+        if (old_mbo->levels[i].price == cancel_price) {
+            if (old_mbo->levels[i].quantity == to_cancel->quantity){
+                level_wipe = 1;
+                new_mbo->level_count--;
+            }
+            break;
+        }
+    }
+    
+    // at this point level_count is set
+    // ah wait now we need orders again in ob
+
+    MBORunner * old_runner = mbor_init(old_mbo);
+    MBORunner * new_runner = mbor_init(new_mbo);
+
+    for (u16 j = 0; j < old_mbo->level_count; j++) {
+        if (j == i) {
+            if (level_wipe) {
+                // just skip old
+            } else {
+                mbo_splice_level(old_runner, new_runner, cancel_id);
+                mbo_jump(new_runner);
+            }
+        } else {
+            mbo_copy_level(old_runner, new_runner);
+            mbo_jump(new_runner);
+        }
+        mbo_jump(old_runner);
+    }
+
+    // that fuckin easy
+
+    return ((void*)(new_runner->level)) - new_mbo_raw;
+}
+
 // fill holder for the trades we make
 // it's not up to this OB modifier to handle fills just to log them really
-u32 ob_execute(u32 order_id, Order* in, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
+// not just limits, everythign
+u32 ob_execute(CB* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
+    Order* in = fl_get(orders, order_id);
+
+    // cancel is checked elsehwere
+
     u8 direction = (in->status >> BUY_DIRECTION_BIT) & 1;
     u16 price = in->price;
     u32 quantity = in->quantity;

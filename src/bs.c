@@ -17,8 +17,6 @@
 // initial state for metadata, start at -1, end at 0
 // start at 0, end at 0 means that the circular buffer is full 100%
 
-
-
 BS* bs_init(uint16_t metadata_capacity) {
     BS* bs = malloc(sizeof(BS));
 
@@ -269,11 +267,9 @@ void bs_bump_refs(BS* bs, uint32_t bs_number) {
     bs->metadata[bs_number].refs = bs->metadata[bs_number].refs + 1;
 }
 
-
 void bs_free(BS* bs) {
     free(bs->metadata);
     free(bs->store);
     free(bs);
 }
-
 

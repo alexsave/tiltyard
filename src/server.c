@@ -52,10 +52,133 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     return sc;
 }
 
+void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantity_filled, u32 order_id) {
+    bs_bump_refs(sc->mbo_bs, sc->last_mbo);
+    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled};
+    u32 response_id = fl_insert(sc->responses, &r);
+    u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+    sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
+    // so don't blast over websocket
+    sc->client_settings[client_id].will_notify = 1;
+}
+
+void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
+    ClientSettings* client_settings = sc->client_settings;
+    BS* mbo_bs = sc->mbo_bs;
+    SCH* sch = sc->sch;
+    Holder* ho = sc->ho;
+    FL* responses = sc->responses;
+    FL* orders = sc->orders;
+    CB* fills = sc->fills;
+    u64 now_ns = sch_now_ns(sch);
+
+    Order* in = (Order*)fl_get(orders, exec_order_id);
+    u8 status = 0;
+    u8 will_modify = 0;
+    printf("cancel event %u!\n", in->other_id);
+    // different checks
+    // the usual ones check if the money and quantity is right
+    // this one is easier maybe
+    // what could prevent us from cancelling?
+    // 1. we dont own the order
+    // 2. it's 100% filled, ie not in the book
+
+    Order* to_cancel = (Order*)fl_get(orders, in->other_id);
+    // easy checks 
+    u8 is_ours = to_cancel->client_id == in->client_id;
+    u8 is_active = to_cancel->quantity > 0;
+
+    // should we set the cancellation bit in the rejection response?
+    // or will they know by the id?
+    // its not liek there will be a second response along the lines of "your order was cancelled"
+    // no, the repsonse to this cancel will either be "your order was cancelled" or "your cancellation order was rejected"
+    // ah but wait its kinda like if you have a fill, you need to provide the id
+    // so we should send some special thing back to the client like 
+    // THIS order was cancelled
+
+    status |= (1 << CANCEL_BIT);
+
+    if (!is_ours || !is_active)// reject the cancel
+        will_modify = 0;
+    else
+        will_modify = 1;
+
+    // aight then fuck it
+    // what do we know
+    // if the cancel fails, it goes only to the self
+    // if the cancel succeeds, it goes only to the self + websocket listeners
+    // there is no "other client" that is exclusively notified, you cancel yourself
+
+    // simpler case
+    if (!will_modify){
+        printf("REJECTED\n");
+        status |= (1<<REJECT_BIT);
+
+        schedule_response(sc, in->client_id, status, 0, exec_order_id);
+        return;
+    }
+
+    printf("CANCEL ACCEPTED %u!\n", in->other_id);
+
+    u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
+    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
+
+    void* new_mbo_raw;
+    u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
+
+    u32 new_size = ob_cancel(to_cancel, in->other_id, old_mbo_raw, new_mbo_raw);
+    bs_resize(sc->mbo_bs, new_size);
+
+    sc->last_mbo = next_last_mbo;
+
+    // ok so thats just the OB manipulation
+    // now we need to actually do accounting
+
+    // it's not a trade per se
+    u8 was_buy = ((to_cancel->status) >> BUY_DIRECTION_BIT ) & 1;
+
+    for(u32 i = 0; i < ho->num_clients; i++) {
+        ClientSettings* cs = sc->client_settings + i;
+        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", i, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    }  
+
+    // was buy/bid, need to unreserve money
+    // was sell/ask, need to unrserve shares
+    if (was_buy){
+        client_settings[in->client_id].reserved_cash -= to_cancel->quantity * to_cancel->price;
+    } else {
+        client_settings[in->client_id].reserved_shares -= to_cancel->quantity;
+    }
+
+    // special response for self,
+
+    schedule_response(sc, in->client_id, status, 0, exec_order_id);
+
+    // final broadcast send
+    for (u32 ci = 0; ci < ho->num_clients; ci++){
+        if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
+            schedule_response(sc, ci, 0, 0, MAX_U32);
+        }
+        // reset
+        client_settings[ci].will_notify = 0;
+    }
+
+    mbo_dump(old_mbo_raw);
+    mbo_dump(new_mbo_raw);
+    for(u32 i = 0; i < ho->num_clients; i++) {
+        ClientSettings* cs = sc->client_settings + i;
+        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", i, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    }  
+    exit(1);
+
+}
+
 
 // much better
 // the big driver of all market book stuff
-void server_exec_end(ServerContext* sc) {
+// this mostly takes care of scheduling, then passes it off to server_order
+void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // maybe I rename at least the struct names
     //u32 last_mbo = sc->last_mbo;
@@ -65,23 +188,37 @@ void server_exec_end(ServerContext* sc) {
     Holder* ho = sc->ho;
     FL* responses = sc->responses;
     FL* orders = sc->orders;
-    CB* sw_queue = sc->sw_queue;
     CB* fills = sc->fills;
     u64 now_ns = sch_now_ns(sch);
 
-    if (cb_is_empty(sw_queue)) {
-        //really weird
-        sc->executing = 0;
-        return;
-    }
-
-
-    u32 exec_order_id = *(u32*)cb_deque(sw_queue);
-    //printf("exec finished on order %u\n", exec_order_id);
-
     Order* in = (Order*)fl_get(orders, exec_order_id);
 
-    u32 agro = in->client_id;
+    ClientSettings* cs = (client_settings + in->client_id);
+
+    u16 status = 0;
+
+    // for now we'll just handle socket connections
+    u8 is_toggle_ws = (in->status & (1 << WS_BIT));
+    if (is_toggle_ws) {
+        cs->ws = !(cs->ws);
+        status |= (1 << WS_BIT);
+    }
+    u8 is_ping = (in->status >> PING_BIT) & 1;
+    if (is_ping)
+        status |= 1 << PING_BIT;
+
+    // we should have prechecks for cancel orders too
+
+
+
+    // maybe genuinely be better to split off into it's own method entirely
+    u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
+
+
+    if (is_cancel) 
+        return server_cancel_order(sc, exec_order_id);
+
+    u8 will_modify;
 
     u32 before_quantity = in->quantity;
     u32 in_cost = before_quantity * in->price;
@@ -95,194 +232,164 @@ void server_exec_end(ServerContext* sc) {
     // more interestingly, what will this look like in the actual OB
 
 
-    ClientSettings* cs = (client_settings + agro);//?
-
     u8 has_bp = (cs->cash - cs->reserved_cash) >= in_cost;
     u8 has_shares = (cs->shares - cs->reserved_shares) >= before_quantity;
     u8 is_valid_quantity = in->quantity > 0;
     u8 is_valid_price = in->price > 0;
-    u8 is_toggle_ws = (in->status & (1 << WS_BIT));
     // you can have a "ping order", so order without the websocket stuff
-    u8 is_ping = (in->status >> PING_BIT) & 1;
 
     //u8 is_pure_get = !is_valid_quantity & is_ping;
 
-    u8 will_modify;
     if(is_buy)
         will_modify = has_bp & is_valid_quantity & is_valid_price;
     else 
         will_modify = has_shares & is_valid_quantity & is_valid_price;
 
-    // for now we'll just handle socket connections
-    if (is_toggle_ws) 
-        cs->ws = !(cs->ws);
 
     /*
-    printf("[%us] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
 
-    if(is_buy && !has_bp) 
-        printf("REJ $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
+       if(is_buy && !has_bp) 
+       printf("REJ $%u > $%u\n", in_cost, cs->cash - cs->reserved_cash);
 
-    if(!is_buy && !has_shares) 
-        printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
-    */
+       if(!is_buy && !has_shares) 
+       printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
+     */
 
-    u16 status = 0;
 
-    if (is_ping)
-        status |= 1 << PING_BIT;
 
-    if (is_toggle_ws)
-        status |= (1 << WS_BIT);
-
-    if (will_modify){
-        printf("[%llus] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-        printf("accepted\n");
-
-        // mbo_dump + used to create next snapshot
-        // us, plus at least the one who sent request?
-
-        u32 prev_last_mbo = sc->last_mbo;
-        //if(exec_order_id > 2000000){
-        //mbo_dump(mbo);
-        //exit(1);
-        //}
-
-        // this WILL modify the in Order, to modify quantity
-        // it's either that or we mess with the return value somehow
-
-        // actually we can make this more simple by handling bs here
-        
-        u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
-        // new resting order on new price level, requring an additional index, additional level header, and additional level entry
-        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
-
-        void* new_mbo_raw;
-        u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
-        void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
-
-        u32 new_size = ob_execute(exec_order_id, in, old_mbo_raw, new_mbo_raw, fills);
-        if (exec_order_id == 24){
-            mbo_dump(old_mbo_raw);
-            mbo_dump(new_mbo_raw);
-            exit(1);
-        }
-
-        sc->last_mbo = next_last_mbo;
-
-        bs_resize(mbo_bs, new_size);
-
-        // ^ but this is just for our client of incoming order
-        // we still need to go through and fill the orders we hit
-        // just dont update the incoming order client after this "taker"
-
-        if (in->quantity < before_quantity){
-            status |= (1 << FILL_BIT);
-            if (in->quantity > 0)
-                status |= (1 << PARTIAL_FILL_BIT);
-        }
-
-        // check exec_order_id to see if we had a partial fill
-        if (is_buy) 
-            cs->reserved_cash += in->quantity * in->price;
-        else 
-            cs->reserved_shares += in->quantity;
-
-        // ok now we have fills and partial_id maybe
-        // partial id will be filled last by definiton
-        while (!cb_is_empty(fills)){
-            // this guy is actuall responsible for ensuring "orders" fl is updated
-
-            Fill* fill = (Fill*)cb_deque(fills);
-            // its filled, we dont need it anymore I think
-            // we could probably release, but it's confusing right now
-            //printf("order releasing due to fill %u\n", filled_order_id);
-            Order* order = (Order*)fl_get(orders, fill->order_id);
-
-            u32 q = fill->quantity_filled;//order->quantity;
-            u32 cost = order->price * q;
-
-            printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", (in->status >> BUY_DIRECTION_BIT) & 1, order->price, q, fill->order_id, now_ns, fill->partial);
-
-            order->quantity -= q;
-
-            u32 maker = order->client_id;
-
-            ClientSettings* mcs = (client_settings + maker);
-
-            if (is_buy){
-                cs->cash -= cost;
-                cs->shares += q;
-                mcs->cash += cost;
-                mcs->shares -= 1;
-                mcs->reserved_shares -= 1;
-            } else {
-                cs->shares -= q;
-                cs->cash += cost;
-                mcs->shares += q;
-                mcs->cash -= cost;
-                mcs->reserved_cash -= cost;
-            }
-
-            u16 fstatus = 1 << FILL_BIT;
-            if (fill->partial) {
-                fstatus |= 1 << PARTIAL_FILL_BIT;
-            }
-
-            // Now this COULD create multiple responses for a single maker
-            bs_bump_refs(mbo_bs, sc->last_mbo);
-            // this doesn't seem to get to the makers for some reason
-            Response r = {.client_id = maker, .snapshot_id = sc->last_mbo, .order_id = fill->order_id, .status = fstatus, .quantity_filled = q};
-            u32 response_id = fl_insert(responses, &r);
-            u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-            sch_schedule(sch, response_event, calculate_jitter(client_settings + maker, sc->rand)); 
-            client_settings[maker].will_notify = 1;
-        }
-
-        bs_get(mbo_bs, prev_last_mbo);
-        //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
-
-        // ok one quick thing we can do is use client settings here to mark some clients as "will receive notification" 
-        // then skip them from teh general websocket blast
-        // and unmark them after
-
-        // i know its ugly
-        for (u32 ci = 0; ci < ho->num_clients; ci++){
-            if (client_settings[ci].will_notify == 0){
-                if((ci != in->client_id) && (client_settings[ci].ws)) {
-                    //printf("making response for %u\n", ci);
-                    // make a new response for them
-                    bs_bump_refs(mbo_bs, sc->last_mbo);
-                    Response r = {.client_id = ci, .snapshot_id = sc->last_mbo, .order_id = MAX_U32, .status=0};
-                    u32 response_id = fl_insert(responses, &r);
-                    u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-
-                    sch_schedule(sch, response_event, calculate_jitter(client_settings + ci, sc->rand)); 
-                }
-            } else {
-                // reset
-                client_settings[ci].will_notify = 0;
-            }
-        }
-
-        // send special one to self
-        bs_bump_refs(mbo_bs, sc->last_mbo);
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .order_id = exec_order_id, .status=status, .quantity_filled = (before_quantity - in->quantity)};
-        u32 response_id = fl_insert(responses, &r);
-        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand)); 
-
-    } else {
+    if(!will_modify){
         status |= (1<<REJECT_BIT);
-        bs_bump_refs(mbo_bs, sc->last_mbo);
-        // only send reject to that one client, later
-        Response r = {.client_id = in->client_id, .snapshot_id = sc->last_mbo, .status=status, .order_id = exec_order_id};
-        u32 response_id = fl_insert(responses, &r);
-
-        u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
-        sch_schedule(sch, response_event, calculate_jitter(client_settings + (in->client_id), sc->rand));
+        schedule_response(cs, in->client_id, status, 0, exec_order_id);
+        return;
     }
 
+
+    printf("[%llus] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    printf("accepted\n");
+
+    // mbo_dump + used to create next snapshot
+    // us, plus at least the one who sent request?
+
+    u32 prev_last_mbo = sc->last_mbo;
+    //if(exec_order_id > 2000000){
+    //mbo_dump(mbo);
+    //exit(1);
+    //}
+
+    // this WILL modify the in Order, to modify quantity
+    // it's either that or we mess with the return value somehow
+
+    u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
+    // new resting order on new price level, requring an additional index, additional level header, and additional level entry
+    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
+
+    void* new_mbo_raw;
+    u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
+
+    u32 new_size = ob_execute(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
+    if (exec_order_id == 24){
+        mbo_dump(old_mbo_raw);
+        mbo_dump(new_mbo_raw);
+        exit(1);
+    }
+
+    sc->last_mbo = next_last_mbo;
+
+    bs_resize(mbo_bs, new_size);
+
+    // ^ but this is just for our client of incoming order
+    // we still need to go through and fill the orders we hit
+    // just dont update the incoming order client after this "taker"
+
+    if (in->quantity < before_quantity){
+        status |= (1 << FILL_BIT);
+        if (in->quantity > 0)
+            status |= (1 << PARTIAL_FILL_BIT);
+    }
+
+    // check exec_order_id to see if we had a partial fill
+    if (is_buy) 
+        cs->reserved_cash += in->quantity * in->price;
+    else 
+        cs->reserved_shares += in->quantity;
+
+    // ok now we have fills and partial_id maybe
+    // partial id will be filled last by definiton
+    while (!cb_is_empty(fills)){
+        // this guy is actuall responsible for ensuring "orders" fl is updated
+
+        Fill* fill = (Fill*)cb_deque(fills);
+        // its filled, we dont need it anymore I think
+        // we could probably release, but it's confusing right now
+        //printf("order releasing due to fill %u\n", filled_order_id);
+        Order* order = (Order*)fl_get(orders, fill->order_id);
+
+        u32 q = fill->quantity_filled;//order->quantity;
+        u32 cost = order->price * q;
+
+        printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", (in->status >> BUY_DIRECTION_BIT) & 1, order->price, q, fill->order_id, now_ns, fill->partial);
+
+        order->quantity -= q;
+
+        u32 maker = order->client_id;
+
+        ClientSettings* mcs = (client_settings + maker);
+
+        if (is_buy){
+            cs->cash -= cost;
+            cs->shares += q;
+            mcs->cash += cost;
+            mcs->shares -= 1;
+            mcs->reserved_shares -= 1;
+        } else {
+            cs->shares -= q;
+            cs->cash += cost;
+            mcs->shares += q;
+            mcs->cash -= cost;
+            mcs->reserved_cash -= cost;
+        }
+
+        u16 fstatus = 1 << FILL_BIT;
+        if (fill->partial) {
+            fstatus |= 1 << PARTIAL_FILL_BIT;
+        }
+
+        schedule_response(sc, maker, fstatus, q, fill->order_id);
+
+    }
+
+    bs_get(mbo_bs, prev_last_mbo);
+    //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
+
+    // i know its ugly
+
+    // send special one to self
+    schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id);
+
+    // final broadcast send
+    for (u32 ci = 0; ci < ho->num_clients; ci++){
+        if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
+            schedule_response(sc, ci, 0, 0, MAX_U32);
+        }
+        // reset
+        client_settings[ci].will_notify = 0;
+    }
+} 
+
+void server_exec_end(ServerContext* sc) {
+    SCH* sch = sc->sch;
+    CB* sw_queue = sc->sw_queue;
+
+    if (cb_is_empty(sw_queue)) {
+        //really weird
+        sc->executing = 0;
+        return;
+    }
+
+    u32 exec_order_id = *(u32*)cb_deque(sw_queue);
+
+    server_order(sc, exec_order_id);
 
     /*
        if (need to convert stops)
@@ -302,7 +409,9 @@ void server_exec_end(ServerContext* sc) {
         u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_END_ID & PARAM_MASK);
         sch_schedule(sch, socket_event, EXEC_TIME);
     }
-} 
+
+}
+
 
 void server_arrival(ServerContext* sc, u32 order_id) {
     //printf("order %llu arrives at server\n", order_id);
