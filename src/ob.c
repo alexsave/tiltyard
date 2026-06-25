@@ -276,6 +276,8 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, mbo_handle);
     MBO* old_mbo = (MBO*)old_mbo_raw;
+    MBORunner * old_runner = mbor_init(old_mbo);
+    MBORunner * new_runner;
 
     u16 hi_bid_index = old_mbo->hi_bid_index;
     u16 lo_ask_index = hi_bid_index + 1;
@@ -405,8 +407,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         // CHANGING TO EXCLUSIVE
 
-        MBORunner* old_runner = mbor_init(old_mbo);
-        MBORunner* new_runner = mbor_init(new_mbo);
+        new_runner = mbor_init(new_mbo);
         u16 i = 0;
         for ( ; i < lowest_untouched_index; i++) {
             mbo_copy_level(old_runner, new_runner);
@@ -449,12 +450,9 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
             mbo_partial_fill_insert(old_runner, new_runner, price, remaining_quantity);
             
             mbo_jump(new_runner);
-            
-
-
-            //printf("partial fill and insert\n");
         } 
 
+        mbo_to_index(old_runner, highest_untouched_index + 1);
 
         for (old_current_level = highest_untouched_index+1; old_current_level < old_mbo->level_count; old_current_level++) {
             mbo_copy_level(old_runner, new_runner);
@@ -499,8 +497,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
         void* new_run = _data_start(new_mbo_raw);
 
-        MBORunner * old_runner = mbor_init(old_mbo);
-        MBORunner * new_runner = mbor_init(new_mbo);
+        new_runner = mbor_init(new_mbo);
 
         if (price_level_exists) {
             for (u16 i = 0; i < new_mbo->level_count; i++) {
@@ -534,21 +531,22 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
     // even better, we have everythign we need to calculate actual_size
     // as new_runner is left past the end due to jumps...
-    //actual_size = ((void*)(new_runner->level)) - new_mbo_raw;
+    actual_size = ((void*)(new_runner->level)) - new_mbo_raw;
     // ah not yet
 
-    void* new_data_start = _data_start(new_mbo_raw);
+    /*void* new_data_start = _data_start(new_mbo_raw);
     if (new_mbo->level_count == 0) {
         actual_size = new_data_start - new_mbo_raw;
     } else {
         void* mbol = new_mbo->levels[new_mbo->level_count-1].byte_offset + new_data_start;
         actual_size = (mbol + _mbo_level_size(((MBOLevel*)mbol)->order_count)) - new_mbo_raw;
-    }
+    }*/
 
+    mbo_dump(new_mbo);
 
     // much much later
     u8 resize_status = bs_resize(mbo_bs, actual_size);
-    if (resize_status){
+    if (order_id == 14/*resize_status*/){
         u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
         printf("predicted size was %u, then requested to resize to %U\n", max_new_size, actual_size);
         printf("old mbo\n");
