@@ -134,6 +134,8 @@ int main(int argc, char* argv[]){
                     //context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
             }
 
+            printf("sending to clinet %u order %u\n", client_id, response.order_id);
+            // order 7, which filled, seems to be ignored...
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 

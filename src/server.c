@@ -156,10 +156,11 @@ void server_exec_end(ServerContext* sc) {
         // we still need to go through and fill the orders we hit
         // just dont update the incoming order client after this "taker"
 
-        if (in->quantity < before_quantity)
+        if (in->quantity < before_quantity){
             status |= (1 << FILL_BIT);
-        if (in->quantity > 0)
-            status |= (1 << PARTIAL_FILL_BIT);
+            if (in->quantity > 0)
+                status |= (1 << PARTIAL_FILL_BIT);
+        }
 
         // check exec_order_id to see if we had a partial fill
         if (is_buy) 
@@ -210,6 +211,7 @@ void server_exec_end(ServerContext* sc) {
 
             // Now this COULD create multiple responses for a single maker
             bs_bump_refs(mbo_bs, sc->last_mbo);
+            // this doesn't seem to get to the makers for some reason
             Response r = {.client_id = maker, .snapshot_id = sc->last_mbo, .order_id = fill->order_id, .status = fstatus, .quantity_filled = q};
             u32 response_id = fl_insert(responses, &r);
             u64 response_event = build_event(CLIENT_IN_TYPE, response_id);

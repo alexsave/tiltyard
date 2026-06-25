@@ -24,10 +24,18 @@ char* cz_get_name(CZ* cz) {
 
 u8 cz_on_snapshot(CZ* cz, Context* ctx){
     u8 is_ping = ((ctx->status) >> PING_BIT) & 1;
+    u8 is_partial = ((ctx->status) >> PARTIAL_FILL_BIT) & 1;
     u8 is_fill = ((ctx->status) >> FILL_BIT) & 1;
     u8 is_ws = ((ctx->status) >> WS_BIT) & 1;
     u8 is_rej = ((ctx->status) >> REJECT_BIT) & 1;
     u8 is_broadcast = ctx->order_id == MAX_U32;
+    if (is_partial){
+        printf("MY ORDER FILLED PARTIAL %u\n", ctx->order_id, ctx->quantity_filled);
+        //return 0;
+    } else if (is_fill){
+        printf("MY ORDER FILLED %u\n", ctx->order_id, ctx->quantity_filled);
+        //return 0;
+    }
 
     // we really shoudl check fills and update them against our cash guess and shares guess
     // but how can we know?
@@ -65,24 +73,20 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     //}
 
     
-    if (is_fill){
-        // ah I guess it's not enogh to say ho wmuc
-        //printf("MY ORDER FILLED %u\n", ctx->order_id);
-        //return 0;
-    }
 
     if (!is_ws && is_rej) {
         // undo effect of the trade
         // OH hold on we need the Order itself
         // luckily we dont need to change teh ENTIRE signature, we can just update context
 
-        Order* last = ctx->response_order_ptr;
+        // not allowed to do this
+        /*Order* last = ctx->response_order_ptr;
         if ((last->status >> BUY_DIRECTION_BIT) & 1) {
             // keep it simpel for now
             cz->cash_guess += last->price * last->quantity;
         } else {
             cz->shares_guess += last->quantity;
-        }
+        }*/
     }
 
     // every other state is impossible or try agian under constraints
