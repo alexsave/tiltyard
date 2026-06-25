@@ -68,12 +68,12 @@ void mbo_dump(void* mbo_raw) {
         //printf("start of order_ids %p\n", &(mbol->order_ids));
 
         for (u16 j = 0; j < mbol->order_count; j++) {
-            u32 oid = mbol->order_ids[j];
+            u32 oid = mbol->entries[j].order_id;
             //if (oid > 43440){
             //printf("some ridiculously large id value already\n");
             //exit(1);
             //}
-            printf("#%u\t", mbol->order_ids[j]);
+            printf("#%u\t", mbol->entries[j].order_id);
         }    
         printf("\n");
     }
@@ -87,7 +87,7 @@ u32 _data_start_offset(u16 level_count) {
 
 
 u32 _mbo_level_size(u16 order_count) {
-    return sizeof(MBOLevel) + order_count * sizeof(u32);
+    return sizeof(MBOLevel) + order_count * sizeof(MBOEntry);
 }
 
 void _write_level(MBO* new_mbo, u16 new_current_level, u16 price, u32 quantity, void* new_run){
@@ -147,7 +147,7 @@ void _insert_level_and_jump(MBO* new_mbo, u16* new_current_level, void** new_run
 
     MBOLevel* mbol = (MBOLevel*)(*new_run);// seprate issue but probably need this too
     mbol->order_count = 1;
-    mbol->order_ids[0] = order_id;
+    mbol->entries[0].order_id = order_id;
 
     //printf("updating pointers %p\n", *new_run);
     *new_run = (*new_run) + _mbo_level_size(1);
@@ -176,7 +176,7 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
     u16 i = 0;
     for (; i < mod_level->order_count; i++) {
         //printf("going throuh orders %u\n", i);
-        u32 prev_order_id = mod_level->order_ids[i];
+        u32 prev_order_id = mod_level->entries[i].order_id;
         Order* prev_order = (Order*)fl_get(orders, prev_order_id);
 
         u32 order_quantity = prev_order->quantity;
@@ -200,10 +200,11 @@ void _partial_fill_and_insert_and_jump(MBO* old_mbo, u16 modified_level_index, M
     init->order_count = remaining_orders_on_level;
     for (u16 j = i; j < mod_level->order_count; j++) {
         ////printf("going throuh orders %u\n", j);
-        init->order_ids[j-i] = mod_level->order_ids[j];
+        // i hope this actually writes to the correct location
+        init->entries[j-i].order_id = mod_level->entries[j].order_id;
     }
 
-    *new_run  = (*new_run) + sizeof(MBOLevel) + (mod_level->order_count - i) * sizeof(u32);
+    *new_run  = (*new_run) + sizeof(MBOLevel) + (mod_level->order_count - i) * sizeof(MBOEntry);
 
     (*new_current_level) = (*new_current_level) + 1;
 }
@@ -248,7 +249,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
 
     // step one - calculate max possible new mbo size
     u32 old_size = mbo_bs->metadata[mbo_handle].size;
-    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
+    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
 
     u32 actual_size = max_new_size;
 
@@ -340,7 +341,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
                 MBOLevel* mod_level = (MBOLevel*)old_run;
                 u32 remaining_orders_on_level = mod_level->order_count;
                 for (u16 i = 0; i < mod_level->order_count; i++) {
-                    u32 prev_order_id = mod_level->order_ids[i];
+                    u32 prev_order_id = mod_level->entries[i].order_id;
                     cb_queue(fills, prev_order_id);
                 }
 
@@ -535,7 +536,7 @@ u32 ob_limit(u32 order_id, FL* orders, u32 mbo_handle, BS* mbo_bs, u16 ref_count
     // much much later
     u8 resize_status = bs_resize(mbo_bs, actual_size);
     if (resize_status){
-        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(u32);
+        u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
         printf("predicted size was %u, then requested to resize to %U\n", max_new_size, actual_size);
         printf("old mbo\n");
         mbo_dump(old_mbo);

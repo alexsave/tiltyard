@@ -27,11 +27,17 @@ typedef struct MBO {
     // after this is the actual order data
 } MBO;
 
+typedef struct MBOEntry {
+    // not used or filled out for now, but it's ready
+    u32 quantity;
+    u32 order_id;
+} MBOEntry;
 
 typedef struct MBOLevel {
     u16 order_count;
-    u32 order_ids[];
+    MBOEntry entries[];
 } MBOLevel;
+
 
 // maybe therse are enough maybe no
 typedef struct MBPLevel {
