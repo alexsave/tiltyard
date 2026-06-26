@@ -30,6 +30,7 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // ok we can work with this
 // could probably all be put in it's own class tbh 
 // yeah why not 
+static const u8 CAN_REP_BIT = 10; // posisbly fold into cancel bit and use quantity check
 static const u8 CANCEL_BIT = 9;
 static const u8 PARTIAL_FILL_BIT = 8;
 static const u8 BUY_DIRECTION_BIT = 7;

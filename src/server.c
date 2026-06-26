@@ -170,6 +170,34 @@ void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
 
 }
 
+// checks the cancel order id valididtiy
+u8 cancel_precheck(Order* in, FL* orders) {
+    Order* to_cancel = (Order*)fl_get(orders, in->other_id);
+    // easy checks
+    u8 is_ours = to_cancel->client_id == in->client_id;
+    u8 is_active = to_cancel->quantity > 0;
+
+    return is_ours && is_active;
+}
+
+// the usual stuff
+u8 add_precheck(Order* in, ClientSettings* cs) {
+    u8 valid;
+
+    u32 before_quantity = in->quantity;
+    u32 in_cost = before_quantity * in->price;
+    u8 is_buy = (in->status >> BUY_DIRECTION_BIT) & 1;
+    u8 has_bp = (cs->cash - cs->reserved_cash) >= in_cost;
+    u8 has_shares = (cs->shares - cs->reserved_shares) >= before_quantity;
+    u8 is_valid_quantity = in->quantity > 0;
+    u8 is_valid_price = in->price > 0;
+
+    if(is_buy)
+        valid = has_bp & is_valid_quantity & is_valid_price;
+    else 
+        valid = has_shares & is_valid_quantity & is_valid_price;
+    return valid;
+}
 
 // much better
 // the big driver of all market book stuff
@@ -205,19 +233,29 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // we should have prechecks for cancel orders too
 
 
-
-    // maybe genuinely be better to split off into it's own method entirely
+    u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
 
-
-    if (is_cancel) 
-        return server_cancel_order(sc, exec_order_id);
-
     u8 will_modify;
+    if (is_can_rep){
+        will_modify = cancel_precheck(in, orders);
+        will_modify &= add_precheck(in, cs);
+        status |= (1 << CAN_REP_BIT);
+    } else if (is_cancel) {
+        will_modify = cancel_precheck(in, orders);
+        status |= (1 << CANCEL_BIT);
+    } else {
+        will_modify = add_precheck(in, cs);
+    }
 
+    // honestly if we truly have a method that can handle everything, we can send it here
+    // but we do need to do prechecks
+    // which could certainly split out into other methods
+
+
+    u8 is_buy = (in->status >> BUY_DIRECTION_BIT) & 1;
     u32 before_quantity = in->quantity;
     u32 in_cost = before_quantity * in->price;
-    u8 is_buy = (in->status >> BUY_DIRECTION_BIT) & 1;
 
     // next big challenge cancelreplace orders
     // so now we need like a cancel id to bundle into this
@@ -227,19 +265,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // more interestingly, what will this look like in the actual OB
 
 
-    u8 has_bp = (cs->cash - cs->reserved_cash) >= in_cost;
-    u8 has_shares = (cs->shares - cs->reserved_shares) >= before_quantity;
-    u8 is_valid_quantity = in->quantity > 0;
-    u8 is_valid_price = in->price > 0;
     // you can have a "ping order", so order without the websocket stuff
 
     //u8 is_pure_get = !is_valid_quantity & is_ping;
-
-    if(is_buy)
-        will_modify = has_bp & is_valid_quantity & is_valid_price;
-    else 
-        will_modify = has_shares & is_valid_quantity & is_valid_price;
-
 
     /*
 
@@ -249,8 +277,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
        if(!is_buy && !has_shares) 
        printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
      */
-
-
 
     if(!will_modify){
         status |= (1<<REJECT_BIT);
