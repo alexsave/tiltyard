@@ -99,7 +99,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
 
     if ((ctx->random & MAX_U8) > 200) {
         // try to cancel somestimes, specifically the one in response to this
-        order_ptr->status |= (1 << CANCEL_BIT);
+        order_ptr->status |= (1 << CAN_REP_BIT);
         order_ptr->other_id = ctx->order_id;
     }
 

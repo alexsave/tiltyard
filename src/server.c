@@ -309,11 +309,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
-    if (exec_order_id == 24){
+    printf("new size %u\n", new_size);
+    //if (exec_order_id == 24){
+        printf("old\n");
         mbo_dump(old_mbo_raw);
+
+        printf("new\n");
         mbo_dump(new_mbo_raw);
-        exit(1);
-    }
+        //exit(1);
+    //}
 
     sc->last_mbo = next_last_mbo;
 
@@ -351,7 +355,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", (in->status >> BUY_DIRECTION_BIT) & 1, order->price, q, fill->order_id, now_ns, fill->partial);
 
+        printf("order q before %u\n", order->quantity);
         order->quantity -= q;
+        // its either do it here, or have the ob file take on even more responsibility for handling stuff
+        in->quantity -= q;
+        printf("order q after %u\n", order->quantity);
 
         u32 maker = order->client_id;
 
@@ -376,6 +384,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             fstatus |= 1 << PARTIAL_FILL_BIT;
         }
 
+        // we should genuinely update teh order->quantity because cancels rely on it
+        
+
+        printf("scheduling response %u\n", fill->order_id);
         schedule_response(sc, maker, fstatus, q, fill->order_id);
 
     }
@@ -386,6 +398,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // i know its ugly
 
     // send special one to self
+    printf("scheduling response %u\n", exec_order_id);
     schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id);
 
     // final broadcast send
