@@ -282,7 +282,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
-    u32 new_size = ob_execute(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
+    u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
     if (exec_order_id == 24){
         mbo_dump(old_mbo_raw);
         mbo_dump(new_mbo_raw);
