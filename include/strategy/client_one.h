@@ -12,6 +12,10 @@
 
 typedef struct CO {
     uint64_t idk;
+    u32 cash_guess;
+    u32 shares_guess;
+    u32 bid_order_id;
+    u32 ask_order_id;
 } CO;
 
 CO* co_init();

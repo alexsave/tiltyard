@@ -14,7 +14,7 @@ CZ* cz_init() {
     CZ* cz = malloc(sizeof(CZ));
     cz->cash_guess = 10000000;
     cz->shares_guess = 1000;
-    cz->waiting_on_id = 0;
+    cz->waiting_on_id = MAX_U32;
     return cz;
 }
 
@@ -145,7 +145,7 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
 void cz_get_settings(CZ* cz, ClientSettings* client_settings){
     // these are like fixed state. you can only change these by 
     // making your computer faster, colocating, booting faster
-    client_settings->initial_wake = (u64)25*60*60*S_TO_NS;
+    client_settings->initial_wake = (u64)2*60*60*S_TO_NS;
     client_settings->processing_time = (u64)1 * S_TO_NS;
     client_settings->net_latency = (u64)3 * S_TO_NS;
 

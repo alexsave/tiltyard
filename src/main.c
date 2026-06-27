@@ -32,8 +32,8 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 3;
-    client_allocations[tm->co_index] = 0;
+    client_allocations[tm->cz_index] = 1;
+    client_allocations[tm->co_index] = 1;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -44,7 +44,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 365*(24*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 2*(24*60*60) *S_TO_NS);
 
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;

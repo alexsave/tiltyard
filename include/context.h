@@ -11,7 +11,7 @@ typedef struct Context {
     u32 order_id; // the order this response is for. MAX_U32 for broadcasts?
     // this is problematic, as the order is always 100% up to date
     // by the time it gets to the client, it could've had another fill on it
-    Order* response_order_ptr;
+    //Order* response_order_ptr;
     u32 quantity_filled; //quantity of that order
     u16 price; //price of that order
     u16 status; // status of ^THIS order
