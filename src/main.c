@@ -119,6 +119,7 @@ int main(int argc, char* argv[]){
 
             context->status = status;
             context->quantity_filled = response.quantity_filled;
+            context->price = response.price;
             
             if ((status >> PING_BIT) & 1) {
                 // the client can schedule these from themselves kinda

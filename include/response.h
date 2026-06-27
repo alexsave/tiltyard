@@ -10,9 +10,12 @@ typedef struct Response {
     // hopefully 1 millino snapshots is enough
 
     u32 snapshot_id;// also boot or socket
+
+    // all about the order this response is about
     u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast 
     u16 status;
     u32 quantity_filled;
+    u16 price;
 } Response;
 
 #endif

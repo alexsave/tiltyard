@@ -94,13 +94,17 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     Order* order_ptr = ctx->next_order_ptr;
     order_ptr->status = (ctx->random & 1) << BUY_DIRECTION_BIT;
 
-    order_ptr->price = (ctx->random & MAX_U16) >> 3;
+    order_ptr->price = ((ctx->random >> 16) & MAX_U16) >> 3;
     order_ptr->quantity = ((ctx->random & MAX_U8) >> 3) + 1;
 
     if ((ctx->random & MAX_U8) > 200) {
         // try to cancel somestimes, specifically the one in response to this
         order_ptr->status |= (1 << CAN_REP_BIT);
         order_ptr->other_id = ctx->order_id;
+    }
+    if ((ctx->random & MAX_U8) > 225) {
+        // try to induce some "optype 4" actions
+        order_ptr->price = ctx->price;
     }
 
     if (is_ping) {

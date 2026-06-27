@@ -52,9 +52,9 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     return sc;
 }
 
-void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantity_filled, u32 order_id) {
+void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantity_filled, u32 order_id, u16 price) {
     bs_bump_refs(sc->mbo_bs, sc->last_mbo);
-    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled};
+    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled, .price = price};
     u32 response_id = fl_insert(sc->responses, &r);
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
@@ -110,7 +110,7 @@ void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
         printf("REJECTED\n");
         status |= (1<<REJECT_BIT);
 
-        schedule_response(sc, in->client_id, status, 0, exec_order_id);
+        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
         return;
     }
 
@@ -149,12 +149,12 @@ void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
 
     // special response for self,
 
-    schedule_response(sc, in->client_id, status, 0, exec_order_id);
+    schedule_response(sc, in->client_id, status, 0, exec_order_id, in->price);
 
     // final broadcast send
     for (u32 ci = 0; ci < ho->num_clients; ci++){
         if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
-            schedule_response(sc, ci, 0, 0, MAX_U32);
+            schedule_response(sc, ci, 0, 0, MAX_U32, 0);
         }
         // reset
         client_settings[ci].will_notify = 0;
@@ -280,7 +280,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     if(!will_modify){
         status |= (1<<REJECT_BIT);
-        schedule_response(sc, in->client_id, status, 0, exec_order_id);
+        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
         return;
     }
 
@@ -357,13 +357,14 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         // the cancelled trade cannot show up here
         // in fact it shoudln't even be here
-        printf("in order q before %u for id %u\n", in->quantity, exec_order_id);
-        printf("resting q before %u for id %u\n", order->quantity, fill->order_id);
+        // we should genuinely update teh order->quantity because cancels rely on it
+        //printf("in order q before %u for id %u\n", in->quantity, exec_order_id);
+        //printf("resting q before %u for id %u\n", order->quantity, fill->order_id);
         order->quantity -= q;
         // its either do it here, or have the ob file take on even more responsibility for handling stuff
         in->quantity -= q;
-        printf("in order q after %u for id %u\n", in->quantity, exec_order_id);
-        printf("resting q after %u for id %u\n", order->quantity, fill->order_id);
+        //printf("in order q after %u for id %u\n", in->quantity, exec_order_id);
+        //printf("resting q after %u for id %u\n", order->quantity, fill->order_id);
 
         u32 maker = order->client_id;
 
@@ -388,20 +389,28 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             fstatus |= 1 << PARTIAL_FILL_BIT;
         }
 
-        // we should genuinely update teh order->quantity because cancels rely on it
         
-
         printf("scheduling response %u\n", fill->order_id);
-        schedule_response(sc, maker, fstatus, q, fill->order_id);
+        schedule_response(sc, maker, fstatus, q, fill->order_id, order->price);
 
     }
 
     // honorary wipe out of cancel, assuming it was cancelled successfully
     if (is_can_rep){
         Order* cancelled = (Order*)fl_get(orders, in->other_id);
+
+        if ((cancelled->status >> BUY_DIRECTION_BIT) & 1){
+            // release cost
+            // it must be  self btw
+            cs->reserved_cash -= cancelled->quantity * cancelled->price;
+        } else {
+            cs->reserved_shares -= cancelled->quantity;
+        }
+
         cancelled->quantity = 0;
         // should probably release too?
         // or should the client receive notification of this, like a fill?
+        // no - this call succeeding implies it went through
     }
 
     bs_get(mbo_bs, prev_last_mbo);
@@ -411,12 +420,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // send special one to self
     printf("scheduling response %u\n", exec_order_id);
-    schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id);
+    schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
 
     // final broadcast send
     for (u32 ci = 0; ci < ho->num_clients; ci++){
         if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
-            schedule_response(sc, ci, 0, 0, MAX_U32);
+            schedule_response(sc, ci, 0, 0, MAX_U32, 0);
         }
         // reset
         client_settings[ci].will_notify = 0;
