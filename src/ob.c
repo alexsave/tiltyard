@@ -24,7 +24,7 @@ static const u8 OP_TYPE_INVALID = MAX_U8;
 
 static const u8 BUY = 1;
 
-void* _data_start(void* mbo_raw){
+void* mbo_data_start(void* mbo_raw){
     return mbo_raw + sizeof(MBO) + ((MBO*)(mbo_raw))->level_count * sizeof(MBOIndex);
 }
 
@@ -62,7 +62,7 @@ void mbo_dump(void* mbo_raw) {
     }
 
 
-    void* data_start = _data_start(mbo_raw);
+    void* data_start = mbo_data_start(mbo_raw);
     printf("level data\n");
 
     for (u16 i = 0; i < mbo->level_count; i++) {
@@ -497,7 +497,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
                 if (effective_level_quantity <= remaining_quantity) {
                     // fill
                     // this looks like a good use case for runners
-                    void* old_run = (_data_start((void*)old_mbo) + old_level->byte_offset);
+                    void* old_run = (mbo_data_start((void*)old_mbo) + old_level->byte_offset);
 
                     MBOLevel* mod_level = (MBOLevel*)old_run;
                     for (u16 i = 0; i < mod_level->order_count; i++) {

@@ -68,6 +68,8 @@ typedef struct MBP {
     MBPLevel levels[];
 } MBP;
 
+void* mbo_data_start(void* mbo_raw);
+
 // definitely a catch all intended to replace the others
 u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 // now returns actual size instead of the new handle. bs is handled by server

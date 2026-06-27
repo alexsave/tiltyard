@@ -62,122 +62,42 @@ void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantit
     sc->client_settings[client_id].will_notify = 1;
 }
 
-void server_cancel_order(ServerContext* sc, u32 exec_order_id) {
-    ClientSettings* client_settings = sc->client_settings;
-    BS* mbo_bs = sc->mbo_bs;
-    Holder* ho = sc->ho;
-    FL* orders = sc->orders;
-
-    Order* in = (Order*)fl_get(orders, exec_order_id);
-    u8 status = 0;
-    u8 will_modify = 0;
-    printf("cancel event %u!\n", in->other_id);
-    // different checks
-    // the usual ones check if the money and quantity is right
-    // this one is easier maybe
-    // what could prevent us from cancelling?
-    // 1. we dont own the order
-    // 2. it's 100% filled, ie not in the book
-
-    Order* to_cancel = (Order*)fl_get(orders, in->other_id);
-    // easy checks 
-    u8 is_ours = to_cancel->client_id == in->client_id;
-    u8 is_active = to_cancel->quantity > 0;
-
-    // should we set the cancellation bit in the rejection response?
-    // or will they know by the id?
-    // its not liek there will be a second response along the lines of "your order was cancelled"
-    // no, the repsonse to this cancel will either be "your order was cancelled" or "your cancellation order was rejected"
-    // ah but wait its kinda like if you have a fill, you need to provide the id
-    // so we should send some special thing back to the client like 
-    // THIS order was cancelled
-
-    status |= (1 << CANCEL_BIT);
-
-    if (!is_ours || !is_active)// reject the cancel
-        will_modify = 0;
-    else
-        will_modify = 1;
-
-    // aight then fuck it
-    // what do we know
-    // if the cancel fails, it goes only to the self
-    // if the cancel succeeds, it goes only to the self + websocket listeners
-    // there is no "other client" that is exclusively notified, you cancel yourself
-
-    // simpler case
-    if (!will_modify){
-        printf("REJECTED\n");
-        status |= (1<<REJECT_BIT);
-
-        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
-        return;
-    }
-
-    printf("CANCEL ACCEPTED %u!\n", in->other_id);
-
-    u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
-    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
-
-    void* new_mbo_raw;
-    u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
-    void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
-
-    u32 new_size = ob_cancel(to_cancel, in->other_id, old_mbo_raw, new_mbo_raw);
-    bs_resize(sc->mbo_bs, new_size);
-
-    sc->last_mbo = next_last_mbo;
-
-    // ok so thats just the OB manipulation
-    // now we need to actually do accounting
-
-    // it's not a trade per se
-    u8 was_buy = ((to_cancel->status) >> BUY_DIRECTION_BIT ) & 1;
-
-    for(u32 i = 0; i < ho->num_clients; i++) {
-        ClientSettings* cs = sc->client_settings + i;
-        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", i, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-    }  
-
-    // was buy/bid, need to unreserve money
-    // was sell/ask, need to unrserve shares
-    if (was_buy){
-        client_settings[in->client_id].reserved_cash -= to_cancel->quantity * to_cancel->price;
-    } else {
-        client_settings[in->client_id].reserved_shares -= to_cancel->quantity;
-    }
-
-    // special response for self,
-
-    schedule_response(sc, in->client_id, status, 0, exec_order_id, in->price);
-
-    // final broadcast send
-    for (u32 ci = 0; ci < ho->num_clients; ci++){
-        if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
-            schedule_response(sc, ci, 0, 0, MAX_U32, 0);
-        }
-        // reset
-        client_settings[ci].will_notify = 0;
-    }
-
-    mbo_dump(old_mbo_raw);
-    mbo_dump(new_mbo_raw);
-    for(u32 i = 0; i < ho->num_clients; i++) {
-        ClientSettings* cs = sc->client_settings + i;
-        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", i, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-    }  
-    //exit(1);
-
-}
-
 // checks the cancel order id valididtiy
-u8 cancel_precheck(Order* in, FL* orders) {
+u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     Order* to_cancel = (Order*)fl_get(orders, in->other_id);
     // easy checks
     u8 is_ours = to_cancel->client_id == in->client_id;
     u8 is_active = to_cancel->quantity > 0;
+    u8 is_rejected = (to_cancel->status >> REJECT_BIT) & 1;
 
-    return is_ours && is_active;
+    // fast check
+    if (!(is_ours && is_active && !is_rejected))
+        return 0;
+
+    u8 in_book = 0;
+    // OH ALSO IS IT IN THE DARN BOOK
+    // it is a bit of a fast hack to rely on the quantity being reset on rejected orders
+    // but we can jump directly there
+    for (u16 i = 0; i < mbo->level_count; i++) {
+        MBOIndex * mboi = mbo->levels + i;
+        if (mboi->price != to_cancel->price) 
+            continue;
+
+        u32 offset = mboi->byte_offset;
+        MBOLevel * mbol = (MBOLevel*)(mbo_data_start(mbo) + offset);
+        for (u16 o = 0; o < mbol->order_count; o++){
+            if (((MBOEntry*)(mbol->entries + o))->order_id != in->other_id)
+                continue;
+            
+            // found em
+            in_book = 1;
+            break;
+        }
+            
+        break;
+    }
+
+    return in_book;
 }
 
 // the usual stuff
@@ -237,12 +157,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
 
     u8 will_modify;
+
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
+
     if (is_can_rep){
-        will_modify = cancel_precheck(in, orders);
+        will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         will_modify &= add_precheck(in, cs);
         status |= (1 << CAN_REP_BIT);
     } else if (is_cancel) {
-        will_modify = cancel_precheck(in, orders);
+        will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
     } else {
         will_modify = add_precheck(in, cs);
@@ -278,8 +201,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
        printf("REJ %u > %u\n", before_quantity, cs->shares - cs->reserved_shares);
      */
 
-    if(!will_modify){
+    if (!will_modify){
         status |= (1<<REJECT_BIT);
+        // best practice to set q to 0
+        in->quantity = 0;
+        
         schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
         return;
     }
@@ -306,7 +232,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     void* new_mbo_raw;
     u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
-    void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
     printf("new size %u\n", new_size);
