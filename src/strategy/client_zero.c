@@ -102,7 +102,14 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
         order_ptr->status |= (1 << CAN_REP_BIT);
         order_ptr->other_id = ctx->order_id;
     }
-    if ((ctx->random & MAX_U8) > 225) {
+    if ((ctx->random & MAX_U8) > 220) {
+        // try to induce some "optype 4" actions
+        order_ptr->price = ctx->price;
+    }
+    if ((ctx->random & MAX_U8) > 240) {
+        // pure cancel
+        order_ptr->status &= ~(1 << CAN_REP_BIT);
+        order_ptr->status |= (1 << CANCEL_BIT);
         // try to induce some "optype 4" actions
         order_ptr->price = ctx->price;
     }

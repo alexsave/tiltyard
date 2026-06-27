@@ -17,6 +17,9 @@ static const u8 REST_REMAINDER = 2;
 static const u8 FILL_SOME = 3;
 static const u8 CAN_REP = 4;
 static const u8 EXACT = 5;
+static const u8 CAN_NO_WIPE = 6;
+static const u8 CAN_WIPE = 7;
+static const u8 SHRINK = 8; // can rep, but keep in place
 static const u8 OP_TYPE_INVALID = MAX_U8;
 
 static const u8 BUY = 1;
@@ -138,6 +141,19 @@ void mbo_app_level(MBORunner* new, u32 order_id, u32 quantity) {
         printf("quantity ended up 0\n");
         mbo_dump(new->mbo);
         exit(1);
+    }
+}
+
+// shrink specific order to that quantity
+void mbo_shrink_level(MBORunner* new, u32 order_id, u32 quantity, u32 new_id) {
+    for (u16 i = 0; i < new->level->order_count; i++) {
+        MBOEntry * order = new->level->entries + i;
+        if (order->order_id == order_id){
+            new->metadata->quantity -= order->quantity - quantity;
+            order->quantity = quantity;
+            order->order_id = new_id;
+            break;
+        }
     }
 }
 
@@ -377,12 +393,13 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     printf("canrep %u\n", rep->status >> CAN_REP_BIT);
 
     u8 is_can_rep = (rep->status >> CAN_REP_BIT) & 1;
+    u8 is_cancel = (rep->status >> CANCEL_BIT) & 1;
     // if not, we're going to assume it's a normal "add"
     // we'll get to plain cancel in a bit, that's much simpler 
 
     // but we need to wire in this assumption
 
-    if (is_can_rep){
+    if (is_can_rep | is_cancel){
         printf("requetsed to cancel %u\n", cancel_id);
         can = (Order*)fl_get(orders, cancel_id);
         for (u8 i = 0; i < old_mbo->level_count; i++) {
@@ -396,10 +413,23 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         }
     }
 
+    // somewhat special case
+    if (!is_can_rep && is_cancel) {
+        if (cancel_was_sole)
+            op_type = CAN_WIPE;
+        else
+            op_type = CAN_NO_WIPE;
+        lui = cancel_index;
+        hui = cancel_index;
+    } else {
+
     if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
         lui = cancel_index;
         hui = cancel_index;
-        op_type = CAN_REP;
+        if (rep->quantity > can->quantity)
+            op_type = CAN_REP;
+        else
+            op_type = SHRINK;
 
         // assuming rep quanity not zero
         new_mbo->level_count = old_mbo->level_count;
@@ -547,6 +577,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         lui = direction == BUY ? untouched_below : untouched_above;
         hui = direction == BUY ? untouched_above : untouched_below;
     }
+    }
 
     // ok at this point we have lui and hui and cancel_index and various other types
     // first lets figure out level count
@@ -589,9 +620,17 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     } else if (op_type == EXACT) {
         // there is nothign but lui and hui, cancel only affects us if it's in hui/lui
         level_count += 0;
+    } else if (op_type == CAN_WIPE) {
+        level_count += 0;
+    } else if (op_type == CAN_NO_WIPE) {
+        // there is one - if it's sole it'll be drope by one right below
+        level_count++;
+    } else if (op_type == SHRINK) {
+        // same as canrep
+        level_count++;
     }
 
-    if (is_can_rep) {
+    if (is_can_rep | is_cancel) {
         if (hui == MAX_U16){
             // we really mean 0 and above is hui
             if ((cancel_index < lui || cancel_index >= 0) && (cancel_was_sole))
@@ -617,7 +656,8 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     u16 i = 0;
     for ( ; i < lui; i++) {
         // ah we do need to be a bit careful
-        if (is_can_rep && old_runner->metadata->price == can->price) {
+        // is cancel might be redundant, as if it's is_cancel, then we wont have the cancellable in the lui or hui
+        if ((is_can_rep|is_cancel) && old_runner->metadata->price == can->price) {
             if (cancel_was_sole){
                 //skip level
             } else {
@@ -701,9 +741,22 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         hbi = new_runner->index - 1;
 
         // skip
+    } else if (op_type == CAN_WIPE) {
+        // similar to exact
+        hbi = old_mbo->hi_bid_index;
+        if (hbi != MAX_U16 && cancel_index <= hbi)
+            hbi--;
+    } else if (op_type == CAN_NO_WIPE) {
+        hbi = old_mbo->hi_bid_index;
+        mbo_splice_level(old_runner, new_runner, cancel_id);
+    } else if (op_type == SHRINK) {
+        // copy then shrink
+        hbi = old_mbo->hi_bid_index;
+        mbo_copy_level(old_runner, new_runner);
+        mbo_shrink_level(new_runner, cancel_id, quantity, order_id);
     }
 
-    if (op_type != EXACT)
+    if (op_type != EXACT && op_type != CAN_WIPE)
         mbo_jump(new_runner);
 
 

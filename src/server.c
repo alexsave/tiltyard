@@ -396,7 +396,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     }
 
     // honorary wipe out of cancel, assuming it was cancelled successfully
-    if (is_can_rep){
+    if (is_can_rep | is_cancel){
         Order* cancelled = (Order*)fl_get(orders, in->other_id);
 
         if ((cancelled->status >> BUY_DIRECTION_BIT) & 1){
