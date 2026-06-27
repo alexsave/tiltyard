@@ -243,71 +243,6 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
     }
 }
 
-void mbo_partial_fill_insert(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity, CB* fills) {
-    // it warns we dont use price. shoudl we?
-    new->metadata->price = old->metadata->price;
-    new->metadata->quantity = old->metadata->quantity - remaining_quantity;
-    new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
-
-    MBOLevel* mod_level = old->level;
-
-    u32 remaining_orders_on_level = mod_level->order_count;
-
-    u8 partial_fill = 0;
-
-    u16 i = 0;
-    for (; i < mod_level->order_count; i++) {
-        // that's what we USED to do. but really we just modify the order book here
-        // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the order themselves
-        // which also solves the whole partial thing
-
-        MBOEntry * prev_order = mod_level->entries + i;
-        u32 prev_order_id = prev_order->order_id;
-        u32 order_quantity = prev_order->quantity;
-
-        if (order_quantity > remaining_quantity) {
-            //prev_order->quantity -= remaining_quantity;
-            Fill f = {
-                .order_id = prev_order_id, 
-                .quantity_filled = remaining_quantity, 
-                .partial = 1};
-            partial_fill = 1;
-            cb_queue(fills, &f);
-            printf("c filling %u\n", prev_order_id);
-            break;
-        } else {
-            // fill resting order entirely
-            remaining_orders_on_level--;
-            remaining_quantity -= order_quantity;
-            Fill f = {
-                .order_id = prev_order_id, 
-                .quantity_filled = order_quantity};
-            cb_queue(fills, &f);
-            printf("d filling %u\n", prev_order_id);
-        }
-    }
-
-    MBOLevel * init = new->level;
-
-    u16 j = i;
-
-    if (partial_fill) {
-        // I feel like we were previously forgetting to write in the case of partial fill, not anymore
-        // first need to append that last one in, but NOT modify the one on server
-        MBOEntry * prev_order = mod_level->entries + i;
-        init->entries[0].order_id = prev_order->order_id;
-        init->entries[0].quantity = prev_order->quantity - remaining_quantity;
-
-        j++;
-    }
-
-    init->order_count = remaining_orders_on_level;
-    for (; j < mod_level->order_count; j++){
-        init->entries[j-i].order_id = mod_level->entries[j].order_id;
-        init->entries[j-i].quantity = mod_level->entries[j].quantity;
-    }
-}
-
 // used for cancellations
 void mbo_splice_level(MBORunner* old, MBORunner* new, u32 cancel_id) {
     new->metadata->price = old->metadata->price;
@@ -536,11 +471,14 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
 
                     MBOLevel* mod_level = (MBOLevel*)old_run;
                     for (u16 i = 0; i < mod_level->order_count; i++) {
+                        MBOEntry * entry = mod_level->entries + i;
+                        if (is_can_rep && entry->order_id == cancel_id)
+                            continue;
                         Fill f = { 
-                            .order_id = mod_level->entries[i].order_id,
-                            .quantity_filled = mod_level->entries[i].quantity};
+                            .order_id = entry->order_id,
+                            .quantity_filled = entry->quantity};
                         cb_queue(fills, &f);
-                        printf("f filling %u\n", mod_level->entries[i].order_id);
+                        printf("f filling %u\n", entry->order_id);
                     }  
                 }
 
@@ -716,38 +654,16 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
 
         hbi = old_mbo->hi_bid_index;
 
-        if (is_can_rep && cancel_index < lui && cancel_was_sole && cancel_index <= hbi)
+        if (hbi != MAX_U16 && is_can_rep && cancel_was_sole && cancel_index <= hbi)
             hbi--;
 
         if (direction == BUY)
             hbi++;
-        /*if (is_can_rep){
-          if (hbi == MAX_U16){
-          if (direction == BUY)
-          hbi++;
-          } else {
-          if (new < hbi && hbi < cancel_index)
-          hbi++;
-          else if (cancel_index <= hbi && hbi < new)
-          hbi--;
-          }
-          } else {
-          if (hbi == MAX_U16){
-          if (direction == BUY)
-          hbi++;
-          } else {
-          if (new < hbi)
-          hbi++;
-          else if (new > hbi)
-          hbi--;
-          }
-          }*/
 
         // old not relevant
         mbo_insert_level(new_runner, order_id, price, quantity);
     } else if (op_type == APPEND) {
-
-        if (is_can_rep && cancel_was_sole && cancel_index < old_mbo->hi_bid_index)
+        if (hbi != MAX_U16 && is_can_rep && cancel_was_sole && cancel_index <= old_mbo->hi_bid_index)
             hbi = old_mbo->hi_bid_index - 1;
         else
             hbi = old_mbo->hi_bid_index;

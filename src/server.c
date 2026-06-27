@@ -355,11 +355,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", (in->status >> BUY_DIRECTION_BIT) & 1, order->price, q, fill->order_id, now_ns, fill->partial);
 
-        printf("order q before %u\n", order->quantity);
+        // the cancelled trade cannot show up here
+        // in fact it shoudln't even be here
+        printf("in order q before %u for id %u\n", in->quantity, exec_order_id);
+        printf("resting q before %u for id %u\n", order->quantity, fill->order_id);
         order->quantity -= q;
         // its either do it here, or have the ob file take on even more responsibility for handling stuff
         in->quantity -= q;
-        printf("order q after %u\n", order->quantity);
+        printf("in order q after %u for id %u\n", in->quantity, exec_order_id);
+        printf("resting q after %u for id %u\n", order->quantity, fill->order_id);
 
         u32 maker = order->client_id;
 
@@ -390,6 +394,14 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         printf("scheduling response %u\n", fill->order_id);
         schedule_response(sc, maker, fstatus, q, fill->order_id);
 
+    }
+
+    // honorary wipe out of cancel, assuming it was cancelled successfully
+    if (is_can_rep){
+        Order* cancelled = (Order*)fl_get(orders, in->other_id);
+        cancelled->quantity = 0;
+        // should probably release too?
+        // or should the client receive notification of this, like a fill?
     }
 
     bs_get(mbo_bs, prev_last_mbo);
