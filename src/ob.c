@@ -579,6 +579,8 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         }
     }
 
+    // ==== new section 
+
     // ok at this point we have lui and hui and cancel_index and various other types
     // first lets figure out level count
 
@@ -644,6 +646,8 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     }
 
     new_mbo->level_count = level_count;
+
+    // ==== new section 
 
     // ok now we can really have fun
     // copy in lower block
@@ -759,6 +763,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     if (op_type != EXACT && op_type != CAN_WIPE)
         mbo_jump(new_runner);
 
+    // ==== new section 
 
     mbo_to_index(old_runner, hui + 1);
     for (i = hui + 1; i < old_mbo->level_count; i++){
@@ -782,6 +787,5 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         new_mbo->hi_bid_index = MAX_U16;
     // then do some calculation like
     return ((void*)(new_runner->level)) - new_mbo_raw;
-
 }
 

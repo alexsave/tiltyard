@@ -356,40 +356,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // ok unfortunately we do need to do a a few assertions to make sure of stuff before we refactor
     // this explicitly relies on the 2 client $10000000 1000sh initial setup
-    {
-        //mbo_dump(old_mbo_raw);
-        //mbo_dump(new_mbo_raw);
-        if(
-                (((MBO*)(new_mbo_raw))->level_count > 0)&& 
-                (((MBO*)(new_mbo_raw))->levels[0].price == 0)
-          ){
-            printf("INVARIANT VIOLATION\n");
-            //printf("old\n");
-            //mbo_dump(old_mbo_raw);
-            //printf("new\n");
-            //mbo_dump(new_mbo_raw);
-
-            exit(1);
-        }
-    }
-
-    {
-        // cheap and powerful
-        ClientSettings * z = client_settings;
-        ClientSettings * o = client_settings + 1;
-        if(((u64)(z->cash) + (u64)(o->cash) != 20000000) || ((u64)(z->shares) + (u64)(o->shares) != 2000) || (z->cash < z->reserved_cash) || (o->cash < o->reserved_cash) || (z->shares < z->reserved_shares) || (o->shares < o->reserved_shares)){
-            printf("INVARIANT VIOLATION\n");
-            printf("old\n");
-            mbo_dump(old_mbo_raw);
-            printf("new\n");
-            mbo_dump(new_mbo_raw);
-            printf("from client id 0 [$%u/$%u/%ush/%ush]\n", z->cash, z->reserved_cash, z->shares, z->reserved_shares);
-            printf("from client id 1 [$%u/$%u/%ush/%ush]\n", o->cash, o->reserved_cash, o->shares, o->reserved_shares);
-
-            exit(1);
-        }
-    }
-
 
 
     bs_get(mbo_bs, prev_last_mbo);

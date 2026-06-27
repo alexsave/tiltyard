@@ -32,10 +32,10 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 2;
+    client_allocations[tm->cz_index] = 3;
     client_allocations[tm->co_index] = 0;
 
-    ServerContext* sc = server_init(tm, client_allocations, 3);
+    ServerContext* sc = server_init(tm, client_allocations, 603);
 
     // genuinely needed everywhere
     SCH* sch = sc->sch;
