@@ -214,7 +214,7 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
                 .quantity_filled = remaining_quantity, 
                 .partial = 1};
             cb_queue(fills, &f);
-            printf("a filling %u\n", prev_order_id);
+            //printf("a filling %u\n", prev_order_id);
             partial_fill = 1;
             break;
         } else {
@@ -225,7 +225,7 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
                 .order_id = prev_order_id, 
                 .quantity_filled = order_quantity};
             cb_queue(fills, &f);
-            printf("b filling %u\n", prev_order_id);
+            //printf("b filling %u\n", prev_order_id);
         }
     }
 
@@ -237,7 +237,7 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
         // I feel like we were previously forgetting to write in the case of partial fill, not anymore
         // first need to append that last one in, but NOT modify the one on server
         MBOEntry * prev_order = mod_level->entries + i;
-        printf("about to fill in data for partial fill %u", (prev_order->quantity - remaining_quantity));
+        //printf("about to fill in data for partial fill %u", (prev_order->quantity - remaining_quantity));
         init->entries[0].order_id = prev_order->order_id;
         init->entries[0].quantity = prev_order->quantity - remaining_quantity;
 
@@ -390,7 +390,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     u32 cancel_id = rep->other_id;
     Order* can;
 
-    printf("canrep %u\n", rep->status >> CAN_REP_BIT);
+    //printf("canrep %u\n", rep->status >> CAN_REP_BIT);
 
     u8 is_can_rep = (rep->status >> CAN_REP_BIT) & 1;
     u8 is_cancel = (rep->status >> CANCEL_BIT) & 1;
@@ -400,7 +400,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     // but we need to wire in this assumption
 
     if (is_can_rep | is_cancel){
-        printf("requetsed to cancel %u\n", cancel_id);
+        //printf("requested to cancel %u\n", cancel_id);
         can = (Order*)fl_get(orders, cancel_id);
         for (u16 i = 0; i < old_mbo->level_count; i++) {
             MBOIndex * level = old_mbo->levels + i;
@@ -469,7 +469,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
 
             // can do ++ or -- as we go
             MBOIndex * old_level = old_mbo->levels + start_search;
-            printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
+            //printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
             if (has_opponents && (multiplier)*(old_level->price) <= multiplier*price) {
                 untouched_below = start_search;
                 untouched_above = top;
@@ -492,7 +492,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
                     if (effective_level_quantity >= remaining_quantity) {
                         untouched_above = current_level;
                     }
-                    printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
+                    //printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
 
                     if (effective_level_quantity <= remaining_quantity) {
                         // fill
@@ -508,12 +508,12 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
                                 .order_id = entry->order_id,
                                 .quantity_filled = entry->quantity};
                             cb_queue(fills, &f);
-                            printf("f filling %u\n", entry->order_id);
+                            //printf("f filling %u\n", entry->order_id);
                         }  
                     }
 
                     if (effective_level_quantity > remaining_quantity){
-                        printf("effective level quantity more than remaining\n");
+                        //printf("effective level quantity more than remaining\n");
                         op_type = FILL_SOME;
                         modified_level = current_level;
                         break;
@@ -586,7 +586,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     // the rest depend on "op_type"
     u16 level_count = (lui - 0) + (old_mbo->level_count - hui - 1);
 
-    printf("level count %u lui %u hui %u op_type %u\n", level_count, lui, hui, op_type);
+    //printf("level count %u lui %u hui %u op_type %u\n", level_count, lui, hui, op_type);
 
     // can be simplified to +1, -1 only for exact but this explanation is good
     if (op_type == NEW){
@@ -764,7 +764,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     for (i = hui + 1; i < old_mbo->level_count; i++){
         if (is_can_rep && old_runner->metadata->price == can->price) {
             if (cancel_was_sole){
-                printf("copying hui, cancel was sole\n");
+                //printf("copying hui, cancel was sole\n");
                 //skip level
             } else {
                 mbo_splice_level(old_runner, new_runner, cancel_id);

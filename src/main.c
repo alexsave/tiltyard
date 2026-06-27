@@ -44,7 +44,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 30*(24*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 365*(24*60*60) *S_TO_NS);
 
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;
@@ -135,7 +135,7 @@ int main(int argc, char* argv[]){
                     //context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
             }
 
-            printf("sending to clinet %u order %u\n", client_id, response.order_id);
+            //printf("sending to client %u order %u\n", client_id, response.order_id);
             // order 7, which filled, seems to be ignored...
             // wait a minute, will this go out of scope. hopefully not
             u8 action = holder_client_on_snapshot(ho, client_id, context);

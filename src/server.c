@@ -211,9 +211,18 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         return;
     }
 
+    printf("[%llus] order #%u ", now_ns/S_TO_NS, exec_order_id);
+    printf("client #%u [$%u/$%u/%uq/%uq] ", in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    if (is_cancel) {
+        printf("cancel order #%u ", in->other_id);
+    } else {
+        printf("limit %s %ush @ $%u ", is_buy ? "buy" : "sell", in->quantity, in->price, in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+        if (is_can_rep) {
+            printf("+ cancel order %u ", in->other_id);
+        }
+    }
+    printf("\n");
 
-    printf("[%llus] order #%u buy %u quantity %u price %u client #%u [$%u/$%u/%uq/%uq] ", now_ns/S_TO_NS, exec_order_id, is_buy, in->quantity, in->price, in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-    printf("accepted\n");
 
     // mbo_dump + used to create next snapshot
     // us, plus at least the one who sent request?
@@ -240,12 +249,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
     //printf("new size %u\n", new_size);
     //if (exec_order_id == 24){
-        //printf("old\n");
-        //mbo_dump(old_mbo_raw);
+    //printf("old\n");
+    //mbo_dump(old_mbo_raw);
 
-        //printf("new\n");
-        //mbo_dump(new_mbo_raw);
-        //exit(1);
+    //printf("new\n");
+    //mbo_dump(new_mbo_raw);
+    //exit(1);
     //}
 
     sc->last_mbo = next_last_mbo;
@@ -313,7 +322,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             fstatus |= 1 << PARTIAL_FILL_BIT;
         }
 
-        
+
         //printf("scheduling response %u\n", fill->order_id);
         schedule_response(sc, maker, fstatus, q, fill->order_id, order->price);
 

@@ -30,10 +30,10 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
     u8 is_rej = ((ctx->status) >> REJECT_BIT) & 1;
     u8 is_broadcast = ctx->order_id == MAX_U32;
     if (is_partial){
-        printf("MY ORDER FILLED PARTIAL %u\n", ctx->order_id, ctx->quantity_filled);
+        //printf("MY ORDER FILLED PARTIAL %u\n", ctx->order_id, ctx->quantity_filled);
         //return 0;
     } else if (is_fill){
-        printf("MY ORDER FILLED %u\n", ctx->order_id, ctx->quantity_filled);
+        //printf("MY ORDER FILLED %u\n", ctx->order_id, ctx->quantity_filled);
         //return 0;
     }
 
@@ -49,10 +49,10 @@ u8 cz_on_snapshot(CZ* cz, Context* ctx){
         // go on, and wait for this next one
         cz->waiting_on_id = ctx->next_order_id;
     } else {
-        printf("got %u but nope, still waiting on order %u\n", ctx->order_id, cz->waiting_on_id);
+        //printf("got %u but nope, still waiting on order %u\n", ctx->order_id, cz->waiting_on_id);
         return 0;
     }
-    printf("got %u finally, ok lets fill out order %u and send it off\n", ctx->order_id, cz->waiting_on_id);
+    //printf("got %u finally, ok lets fill out order %u and send it off\n", ctx->order_id, cz->waiting_on_id);
 
     // or we try something different - ignroe broadcasts
     ////if(is_broadcast)
