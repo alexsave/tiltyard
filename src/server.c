@@ -205,6 +205,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         status |= (1<<REJECT_BIT);
         // best practice to set q to 0
         in->quantity = 0;
+        in->status |= (1<<REJECT_BIT);
         
         schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
         return;

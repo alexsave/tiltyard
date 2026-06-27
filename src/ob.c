@@ -387,7 +387,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     u16 quantity = rep->quantity;
     u16 remaining_quantity = quantity;
     u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
-    u16 cancel_id = rep->other_id;
+    u32 cancel_id = rep->other_id;
     Order* can;
 
     printf("canrep %u\n", rep->status >> CAN_REP_BIT);
