@@ -402,7 +402,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     if (is_can_rep | is_cancel){
         printf("requetsed to cancel %u\n", cancel_id);
         can = (Order*)fl_get(orders, cancel_id);
-        for (u8 i = 0; i < old_mbo->level_count; i++) {
+        for (u16 i = 0; i < old_mbo->level_count; i++) {
             MBOIndex * level = old_mbo->levels + i;
             if (level->price == can->price){
                 cancel_index = i;
@@ -423,160 +423,160 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
         hui = cancel_index;
     } else {
 
-    if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
-        lui = cancel_index;
-        hui = cancel_index;
-        if (rep->quantity > can->quantity)
-            op_type = CAN_REP;
-        else
-            op_type = SHRINK;
+        if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
+            lui = cancel_index;
+            hui = cancel_index;
+            if (rep->quantity > can->quantity)
+                op_type = CAN_REP;
+            else
+                op_type = SHRINK;
 
-        // assuming rep quanity not zero
-        new_mbo->level_count = old_mbo->level_count;
-    } else {
-        // check if marketable
-        u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
-
-        i16 multiplier = 0;
-        u16 hi_bid_index = old_mbo->hi_bid_index;
-        u16 lo_ask_index = hi_bid_index + 1;
-
-        u16 start_search;
-        u16 bottom;
-        u16 top;
-
-        u8 has_opponents = 1;
-
-        if (direction == 1) {
-            start_search = lo_ask_index;
-            multiplier = 1;
-            //more deep
-            bottom = 0;
-            top = old_mbo->level_count - 1;
-
-            has_opponents = lo_ask_index < old_mbo->level_count;
+            // assuming rep quanity not zero
+            new_mbo->level_count = old_mbo->level_count;
         } else {
-            start_search = hi_bid_index;
-            multiplier = -1;
-            bottom = old_mbo->level_count-1;
-            top = 0;
-            has_opponents = hi_bid_index != MAX_U16;
-        }
+            // check if marketable
+            u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
 
-        u16 untouched_below = start_search;
-        u16 untouched_above = top;
+            i16 multiplier = 0;
+            u16 hi_bid_index = old_mbo->hi_bid_index;
+            u16 lo_ask_index = hi_bid_index + 1;
 
+            u16 start_search;
+            u16 bottom;
+            u16 top;
 
-        // can do ++ or -- as we go
-        MBOIndex * old_level = old_mbo->levels + start_search;
-        printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
-        if (has_opponents && (multiplier)*(old_level->price) <= multiplier*price) {
-            untouched_below = start_search;
-            untouched_above = top;
-            // this will also take the lowest ask -> replace with bid case
+            u8 has_opponents = 1;
 
-            for(u16 current_level = start_search; ; current_level += multiplier) {
-                old_level = old_mbo->levels + current_level;
+            if (direction == 1) {
+                start_search = lo_ask_index;
+                multiplier = 1;
+                //more deep
+                bottom = 0;
+                top = old_mbo->level_count - 1;
 
-                if (remaining_quantity > 0 && multiplier*price < multiplier*old_level->price) {
-                    op_type = REST_REMAINDER;
-                    untouched_above = current_level - multiplier;
-                    break;
-                }
-
-                // could be zero, the same as eating the entire level
-                u32 effective_level_quantity = old_level->quantity;
-                if (is_can_rep && old_level->price == can->price)
-                    effective_level_quantity -= can->quantity;
-
-                if (effective_level_quantity >= remaining_quantity) {
-                    untouched_above = current_level;
-                }
-                printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
-
-                if (effective_level_quantity <= remaining_quantity) {
-                    // fill
-                    // this looks like a good use case for runners
-                    void* old_run = (mbo_data_start((void*)old_mbo) + old_level->byte_offset);
-
-                    MBOLevel* mod_level = (MBOLevel*)old_run;
-                    for (u16 i = 0; i < mod_level->order_count; i++) {
-                        MBOEntry * entry = mod_level->entries + i;
-                        if (is_can_rep && entry->order_id == cancel_id)
-                            continue;
-                        Fill f = { 
-                            .order_id = entry->order_id,
-                            .quantity_filled = entry->quantity};
-                        cb_queue(fills, &f);
-                        printf("f filling %u\n", entry->order_id);
-                    }  
-                }
-
-                if (effective_level_quantity > remaining_quantity){
-                    printf("effective level quantity more than remaining\n");
-                    op_type = FILL_SOME;
-                    modified_level = current_level;
-                    break;
-                } else if (effective_level_quantity == remaining_quantity) {
-                    remaining_quantity -= effective_level_quantity;
-                    op_type = EXACT;
-                    break;
-                } else {
-                    remaining_quantity -= effective_level_quantity;
-                }
-
-                if (current_level == top) {
-                    if (remaining_quantity > 0) {
-                        op_type = REST_REMAINDER;
-                        untouched_above = top;
-                    }
-                    break;
-                }
-
-            }
-
-        } else {
-
-            if (direction == 1 && hi_bid_index != MAX_U16 && old_mbo->levels[hi_bid_index].price < price) {
-                op_type = NEW;
-                untouched_below = hi_bid_index + 1;
-                untouched_above = hi_bid_index;
+                has_opponents = lo_ask_index < old_mbo->level_count;
             } else {
-                for(; start_search != bottom; start_search -= multiplier) {
-                    u16 level_price = old_mbo->levels[(u16)(start_search-multiplier)].price;
-
-                    if (price*multiplier == level_price*multiplier) {
-                        // does this math work out? or is this bytes?
-                        op_type = APPEND;
-                        untouched_below = start_search-multiplier;
-                        untouched_above = start_search-multiplier;
-
-                        append_level = start_search-multiplier;
-
-                        break;
-                    }       
-                    if (price*multiplier > level_price*multiplier) {
-                        // this will include all levels currently in old_mbo
-                        op_type = NEW; 
-                        untouched_below = start_search;
-                        untouched_above = start_search-multiplier;
-                        break;
-                    } 
-                }
-                
-
-                // did not find, it needs to be put at bottom
-                if (op_type == OP_TYPE_INVALID) {
-                    op_type = NEW;
-                    untouched_below = bottom;
-                    untouched_above = bottom - multiplier; // iffy on this
-                }
+                start_search = hi_bid_index;
+                multiplier = -1;
+                bottom = old_mbo->level_count-1;
+                top = 0;
+                has_opponents = hi_bid_index != MAX_U16;
             }
 
+            u16 untouched_below = start_search;
+            u16 untouched_above = top;
+
+
+            // can do ++ or -- as we go
+            MBOIndex * old_level = old_mbo->levels + start_search;
+            printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
+            if (has_opponents && (multiplier)*(old_level->price) <= multiplier*price) {
+                untouched_below = start_search;
+                untouched_above = top;
+                // this will also take the lowest ask -> replace with bid case
+
+                for(u16 current_level = start_search; ; current_level += multiplier) {
+                    old_level = old_mbo->levels + current_level;
+
+                    if (remaining_quantity > 0 && multiplier*price < multiplier*old_level->price) {
+                        op_type = REST_REMAINDER;
+                        untouched_above = current_level - multiplier;
+                        break;
+                    }
+
+                    // could be zero, the same as eating the entire level
+                    u32 effective_level_quantity = old_level->quantity;
+                    if (is_can_rep && old_level->price == can->price)
+                        effective_level_quantity -= can->quantity;
+
+                    if (effective_level_quantity >= remaining_quantity) {
+                        untouched_above = current_level;
+                    }
+                    printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
+
+                    if (effective_level_quantity <= remaining_quantity) {
+                        // fill
+                        // this looks like a good use case for runners
+                        void* old_run = (mbo_data_start((void*)old_mbo) + old_level->byte_offset);
+
+                        MBOLevel* mod_level = (MBOLevel*)old_run;
+                        for (u16 i = 0; i < mod_level->order_count; i++) {
+                            MBOEntry * entry = mod_level->entries + i;
+                            if (is_can_rep && entry->order_id == cancel_id)
+                                continue;
+                            Fill f = { 
+                                .order_id = entry->order_id,
+                                .quantity_filled = entry->quantity};
+                            cb_queue(fills, &f);
+                            printf("f filling %u\n", entry->order_id);
+                        }  
+                    }
+
+                    if (effective_level_quantity > remaining_quantity){
+                        printf("effective level quantity more than remaining\n");
+                        op_type = FILL_SOME;
+                        modified_level = current_level;
+                        break;
+                    } else if (effective_level_quantity == remaining_quantity) {
+                        remaining_quantity -= effective_level_quantity;
+                        op_type = EXACT;
+                        break;
+                    } else {
+                        remaining_quantity -= effective_level_quantity;
+                    }
+
+                    if (current_level == top) {
+                        if (remaining_quantity > 0) {
+                            op_type = REST_REMAINDER;
+                            untouched_above = top;
+                        }
+                        break;
+                    }
+
+                }
+
+            } else {
+
+                if (direction == 1 && hi_bid_index != MAX_U16 && old_mbo->levels[hi_bid_index].price < price) {
+                    op_type = NEW;
+                    untouched_below = hi_bid_index + 1;
+                    untouched_above = hi_bid_index;
+                } else {
+                    for(; start_search != bottom; start_search -= multiplier) {
+                        u16 level_price = old_mbo->levels[(u16)(start_search-multiplier)].price;
+
+                        if (price*multiplier == level_price*multiplier) {
+                            // does this math work out? or is this bytes?
+                            op_type = APPEND;
+                            untouched_below = start_search-multiplier;
+                            untouched_above = start_search-multiplier;
+
+                            append_level = start_search-multiplier;
+
+                            break;
+                        }       
+                        if (price*multiplier > level_price*multiplier) {
+                            // this will include all levels currently in old_mbo
+                            op_type = NEW; 
+                            untouched_below = start_search;
+                            untouched_above = start_search-multiplier;
+                            break;
+                        } 
+                    }
+
+
+                    // did not find, it needs to be put at bottom
+                    if (op_type == OP_TYPE_INVALID) {
+                        op_type = NEW;
+                        untouched_below = bottom;
+                        untouched_above = bottom - multiplier; // iffy on this
+                    }
+                }
+
+            }
+            lui = direction == BUY ? untouched_below : untouched_above;
+            hui = direction == BUY ? untouched_above : untouched_below;
         }
-        lui = direction == BUY ? untouched_below : untouched_above;
-        hui = direction == BUY ? untouched_above : untouched_below;
-    }
     }
 
     // ok at this point we have lui and hui and cancel_index and various other types

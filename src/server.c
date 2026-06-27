@@ -236,11 +236,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
     printf("new size %u\n", new_size);
     //if (exec_order_id == 24){
-        printf("old\n");
-        mbo_dump(old_mbo_raw);
+        //printf("old\n");
+        //mbo_dump(old_mbo_raw);
 
-        printf("new\n");
-        mbo_dump(new_mbo_raw);
+        //printf("new\n");
+        //mbo_dump(new_mbo_raw);
         //exit(1);
     //}
 
