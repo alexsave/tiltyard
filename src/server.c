@@ -233,9 +233,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     void* new_mbo_raw;
     u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
+    // critically, a doubling operation could make the previous pointer point to fuck all
+    // we need to get again
+    old_mbo_raw = bs_get_no_ref(mbo_bs, prev_last_mbo);
 
     u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
-    printf("new size %u\n", new_size);
+    //printf("new size %u\n", new_size);
     //if (exec_order_id == 24){
         //printf("old\n");
         //mbo_dump(old_mbo_raw);
@@ -259,11 +262,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             status |= (1 << PARTIAL_FILL_BIT);
     }
 
-    // check exec_order_id to see if we had a partial fill
-    if (is_buy) 
-        cs->reserved_cash += in->quantity * in->price;
-    else 
-        cs->reserved_shares += in->quantity;
 
     // ok now we have fills and partial_id maybe
     // partial id will be filled last by definiton
@@ -316,9 +314,17 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         }
 
         
-        printf("scheduling response %u\n", fill->order_id);
+        //printf("scheduling response %u\n", fill->order_id);
         schedule_response(sc, maker, fstatus, q, fill->order_id, order->price);
 
+    }
+
+    if (!is_cancel) {
+        // check exec_order_id to see if we had a partial fill
+        if (is_buy) 
+            cs->reserved_cash += in->quantity * in->price;
+        else 
+            cs->reserved_shares += in->quantity;
     }
 
     // honorary wipe out of cancel, assuming it was cancelled successfully
@@ -341,6 +347,22 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // ok unfortunately we do need to do a a few assertions to make sure of stuff before we refactor
     // this explicitly relies on the 2 client $10000000 1000sh initial setup
+    {
+        //mbo_dump(old_mbo_raw);
+        //mbo_dump(new_mbo_raw);
+        if(
+                (((MBO*)(new_mbo_raw))->level_count > 0)&& 
+                (((MBO*)(new_mbo_raw))->levels[0].price == 0)
+          ){
+            printf("INVARIANT VIOLATION\n");
+            //printf("old\n");
+            //mbo_dump(old_mbo_raw);
+            //printf("new\n");
+            //mbo_dump(new_mbo_raw);
+
+            exit(1);
+        }
+    }
 
     {
         // cheap and powerful
@@ -367,7 +389,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // i know its ugly
 
     // send special one to self
-    printf("scheduling response %u\n", exec_order_id);
+    //printf("scheduling response %u\n", exec_order_id);
     schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
 
     // final broadcast send
