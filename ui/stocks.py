@@ -6,9 +6,9 @@ from datetime import datetime
 
 # --- build 1s candles straight from the trade log ---
 # log line format:
-#   TRADE <side> <price> <qty> <order_id> <ts_ns> [PARTIAL]
-# side is 0=sell / 1=buy; the timestamp now lives on the trade itself, so we
-# bucket each trade by its own whole second (no separate NOW lines anymore).
+#   TRADE <side> <side_n> p <price> q <qty> id <order_id> now <ts_ns> part <n>
+# side is the word buy/sell (side_n is 0=sell / 1=buy); the timestamp lives on
+# the trade itself, so we bucket each trade by its own whole second.
 secs = []   # epoch second for each candle
 
 opens = []
@@ -23,12 +23,12 @@ with open("../f") as f:
     for x in f:
         cmd = x.split()
 
-        if len(cmd) < 6 or cmd[0] != "TRADE":
+        if len(cmd) < 11 or cmd[0] != "TRADE":
             continue
 
-        price = int(cmd[2]) / 100        # cents -> dollars
-        qty = int(cmd[3])                # qty traded
-        s = int(cmd[5]) // 1000000000    # ts ns -> whole-second bucket
+        price = int(cmd[4]) / 100         # cents -> dollars
+        qty = int(cmd[6])                 # qty traded
+        s = int(cmd[10]) // 1000000000    # ts ns -> whole-second bucket
 
         if s != now:
             # new second: trade seeds open/high/low/close for the bucket
