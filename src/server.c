@@ -193,13 +193,35 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     if (is_pair) {
-        // non-crossing only: bid strictly below ask, and each replacing leg needs a valid cancel
-        will_modify = in->price < in->second_price;
-        if (is_can_rep)
-            will_modify &= cancel_precheck(in, orders, (MBO*)old_mbo_raw);
-        if (ask_is_cr)
-            will_modify &= cancel_precheck(ask_in, orders, (MBO*)old_mbo_raw);
-        // TODO: buying-power / share precheck across both legs once reserve release is settled
+        // the two legs must be ordered (bid strictly below ask); a replacing leg needs a valid
+        // cancel. a stale / nonexistent / not-ours cancel id fails cancel_precheck and rejects.
+        u8 bid_cancel_ok = !is_can_rep || cancel_precheck(in, orders, (MBO*)old_mbo_raw);
+        u8 ask_cancel_ok = !ask_is_cr  || cancel_precheck(ask_in, orders, (MBO*)old_mbo_raw);
+        will_modify = (in->price < in->second_price) & bid_cancel_ok & ask_cancel_ok;
+
+        // whatever we cancel frees its reserve, which helps fund the new legs: a replace that
+        // raises the bid can exceed current buying power yet still fit once the old bid's
+        // reservation comes back. only credit cancels that actually validated (so a bogus
+        // cancel id contributes nothing), and key each to the pool matching its direction.
+        u32 freed_cash = 0, freed_shares = 0;
+        if (is_can_rep && bid_cancel_ok) {
+            Order* oc = (Order*)fl_get(orders, in->other_id);
+            if ((oc->status >> BUY_DIRECTION_BIT) & 1) freed_cash += oc->quantity * oc->price;
+            else freed_shares += oc->quantity;
+        }
+        if (ask_is_cr && ask_cancel_ok) {
+            Order* oc = (Order*)fl_get(orders, ask_in->other_id);
+            if ((oc->status >> BUY_DIRECTION_BIT) & 1) freed_cash += oc->quantity * oc->price;
+            else freed_shares += oc->quantity;
+        }
+        // bid draws cash, ask draws shares — separate pools, checked independently
+        u32 bp = (cs->cash - cs->reserved_cash) + freed_cash;
+        u32 sh = (cs->shares - cs->reserved_shares) + freed_shares;
+        u8 bid_ok = in->quantity > 0 && in->price > 0
+                  && (u64)in->quantity * in->price <= bp;
+        u8 ask_ok = in->second_quantity > 0 && in->second_price > 0
+                  && in->second_quantity <= sh;
+        will_modify &= bid_ok & ask_ok;
     } else if (is_can_rep){
         will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         will_modify &= add_precheck(in, cs);
@@ -218,6 +240,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     u8 is_buy = (in->status >> BUY_DIRECTION_BIT) & 1;
     u32 before_quantity = in->quantity;
+    u32 before_ask_quantity = is_pair ? ask_in->quantity : 0;
     u32 in_cost = before_quantity * in->price;
 
     // next big challenge cancelreplace orders
@@ -297,6 +320,21 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u32 new_size = is_pair
         ? ob_pair(orders, exec_order_id, ask_order_id, old_mbo_raw, new_mbo_raw, fills)
         : ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
+
+    // a pair crosses the book on at most one leg (bid<ask forbids both), so whatever fills
+    // ob_pair queued belong to that one taker. find it by the same best-bid/ask test ob uses.
+    Order* taker = in;
+    u8 taker_is_buy = is_buy;
+    if (is_pair) {
+        MBO* om = (MBO*)old_mbo_raw;
+        u16 hbi = om->hi_bid_index;
+        u16 lo_ask = (hbi == MAX_U16) ? 0 : hbi + 1;
+        if (lo_ask < om->level_count && in->price >= om->levels[lo_ask].price) {
+            taker = in; taker_is_buy = 1;            // bid lifts asks
+        } else if (hbi != MAX_U16 && ask_in->price <= om->levels[hbi].price) {
+            taker = ask_in; taker_is_buy = 0;        // ask hits bids
+        }
+    }
     //printf("new size %u\n", new_size);
     //if (exec_order_id == 24){
     //printf("old\n");
@@ -336,7 +374,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         u32 q = fill->quantity_filled;//order->quantity;
         u32 cost = order->price * q;
 
-        printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", (in->status >> BUY_DIRECTION_BIT) & 1, order->price, q, fill->order_id, now_ns, fill->partial);
+        printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
 
         // the cancelled trade cannot show up here
         // in fact it shoudln't even be here
@@ -345,7 +383,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         //printf("resting q before %u for id %u\n", order->quantity, fill->order_id);
         order->quantity -= q;
         // its either do it here, or have the ob file take on even more responsibility for handling stuff
-        in->quantity -= q;
+        taker->quantity -= q;
         //printf("in order q after %u for id %u\n", in->quantity, exec_order_id);
         //printf("resting q after %u for id %u\n", order->quantity, fill->order_id);
 
@@ -353,7 +391,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         ClientSettings* mcs = (client_settings + maker);
 
-        if (is_buy){
+        if (taker_is_buy){
             cs->cash -= cost;
             cs->shares += q;
             mcs->cash += cost;
@@ -427,8 +465,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // send special one to self
     //printf("scheduling response %u\n", exec_order_id);
     if (is_pair)
-        // both legs, one delivery
-        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, (before_quantity - in->quantity), ask_order_id, ask_in->price, 0);
+        // both legs, one delivery, each with its own filled quantity
+        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, (before_quantity - in->quantity), ask_order_id, ask_in->price, (before_ask_quantity - ask_in->quantity));
     else
         schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
 
