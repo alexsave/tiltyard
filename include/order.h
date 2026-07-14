@@ -30,6 +30,8 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // ok we can work with this
 // could probably all be put in it's own class tbh 
 // yeah why not 
+
+static const u8 ASK_BID_PAIR_BIT = 11; //important for atomic bid and ask update, note that it MUST be bid and ask, with conditions bid < ask
 static const u8 CAN_REP_BIT = 10; // posisbly fold into cancel bit and use quantity check
 static const u8 CANCEL_BIT = 9;
 static const u8 PARTIAL_FILL_BIT = 8;
@@ -47,15 +49,23 @@ static const u8 REJECT_BIT = 0;
 // also includes websocket connections, but here we go
 typedef struct Order {
     u16 status;
+    u32 client_id;
+
     u16 quantity; // up to 65K stocks at a time, update if we have whales
     u16 price;
     u16 stop_price;
 
-    u32 client_id;
 
     // order id for replace or cancel 
     u32 other_id;
     //smh trust me you want to align to 8 bytes, but it'll do it automatically
+
+    // in the case that askbid pair is enabled, this will be the ask, and the above will be the bid
+    u16 second_quantity;
+    u16 second_price;
+    u32 second_id;
+    
+
 } Order;
 
 #endif

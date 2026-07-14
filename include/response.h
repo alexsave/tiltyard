@@ -12,10 +12,16 @@ typedef struct Response {
     u32 snapshot_id;// also boot or socket
 
     // all about the order this response is about
-    u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast 
+    u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast
     u16 status;
     u32 quantity_filled;
     u16 price;
+
+    // for atomic bid+ask pairs: the ask leg, delivered in this same response
+    // (MAX_U32 order id when there is no second leg; filled stays 0 while pairs are non-crossing)
+    u32 second_order_id;
+    u16 second_price;
+    u32 second_quantity_filled;
 } Response;
 
 #endif
