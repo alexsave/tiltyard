@@ -120,7 +120,11 @@ int main(int argc, char* argv[]){
             context->status = status;
             context->quantity_filled = response.quantity_filled;
             context->price = response.price;
-            
+            // atomic pair: the ask leg rides along in the same response (pair bit set in status)
+            context->second_order_id = response.second_order_id;
+            context->second_price = response.second_price;
+            context->second_quantity_filled = response.second_quantity_filled;
+
             if ((status >> PING_BIT) & 1) {
                 // the client can schedule these from themselves kinda
                 // so this will not come with any knowledge of snapshot

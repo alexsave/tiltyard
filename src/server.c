@@ -62,6 +62,16 @@ void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantit
     sc->client_settings[client_id].will_notify = 1;
 }
 
+// same as schedule_response, but carries both legs of an atomic pair in one delivery
+void schedule_pair_response(ServerContext* sc, u32 client_id, u16 status, u32 order_id, u16 price, u32 quantity_filled, u32 second_order_id, u16 second_price, u32 second_quantity_filled) {
+    bs_bump_refs(sc->mbo_bs, sc->last_mbo);
+    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .price = price, .quantity_filled = quantity_filled, .second_order_id = second_order_id, .second_price = second_price, .second_quantity_filled = second_quantity_filled};
+    u32 response_id = fl_insert(sc->responses, &r);
+    u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+    sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
+    sc->client_settings[client_id].will_notify = 1;
+}
+
 // checks the cancel order id valididtiy
 u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     Order* to_cancel = (Order*)fl_get(orders, in->other_id);
@@ -152,15 +162,45 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // we should have prechecks for cancel orders too
 
+    u8 is_pair = (in->status >> ASK_BID_PAIR_BIT) & 1;
 
-    u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;
+    // an atomic pair arrives as one order: bid in the primary fields, ask in second_*.
+    // materialize the ask as its own order so it gets a real id to rest / fill / cancel under.
+    // everything past here is shared with the single-order path, branching only where it differs.
+    u32 ask_order_id = MAX_U32;
+    Order* ask_in = 0;
+    if (is_pair) {
+        Order ask_seed = {};
+        ask_seed.client_id = in->client_id;
+        ask_seed.price = in->second_price;
+        ask_seed.quantity = in->second_quantity;
+        ask_seed.other_id = in->second_id;
+        // ask is a sell; keep the replace/cancel intent, drop the pair bit (this leg is a plain canrep)
+        ask_seed.status = in->status & ~((1 << BUY_DIRECTION_BIT) | (1 << ASK_BID_PAIR_BIT));
+        ask_order_id = fl_insert(orders, &ask_seed);
+        in = (Order*)fl_get(orders, exec_order_id); // fl_insert may have moved the pool
+        ask_in = (Order*)fl_get(orders, ask_order_id);
+        status |= (1 << ASK_BID_PAIR_BIT);
+    }
+
+
+    u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;   // for a pair, this is the bid leg
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
+    u8 ask_is_cr = is_pair ? ((ask_in->status >> CAN_REP_BIT) & 1) : 0;
 
     u8 will_modify;
 
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
-    if (is_can_rep){
+    if (is_pair) {
+        // non-crossing only: bid strictly below ask, and each replacing leg needs a valid cancel
+        will_modify = in->price < in->second_price;
+        if (is_can_rep)
+            will_modify &= cancel_precheck(in, orders, (MBO*)old_mbo_raw);
+        if (ask_is_cr)
+            will_modify &= cancel_precheck(ask_in, orders, (MBO*)old_mbo_raw);
+        // TODO: buying-power / share precheck across both legs once reserve release is settled
+    } else if (is_can_rep){
         will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         will_modify &= add_precheck(in, cs);
         status |= (1 << CAN_REP_BIT);
@@ -206,8 +246,14 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         // best practice to set q to 0
         in->quantity = 0;
         in->status |= (1<<REJECT_BIT);
-        
-        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
+
+        if (is_pair) {
+            // undo the speculative ask leg; report both legs rejected in one response
+            fl_release(orders, ask_order_id);
+            schedule_pair_response(sc, in->client_id, status, exec_order_id, 0, 0, MAX_U32, 0, 0);
+        } else {
+            schedule_response(sc, in->client_id, status, 0, exec_order_id, 0);
+        }
         return;
     }
 
@@ -238,7 +284,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     u32 old_size = mbo_bs->metadata[sc->last_mbo].size;
     // new resting order on new price level, requring an additional index, additional level header, and additional level entry
-    u32 max_new_size = old_size + sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry);
+    // a pair can rest two brand-new levels (bid and ask), a single order at most one
+    u32 levels_added = is_pair ? 2 : 1;
+    u32 max_new_size = old_size + levels_added * (sizeof(MBOIndex) + sizeof(MBOLevel) + sizeof(MBOEntry));
 
     void* new_mbo_raw;
     u32 next_last_mbo = bs_reserve(mbo_bs, max_new_size, 1, &new_mbo_raw);
@@ -246,7 +294,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // we need to get again
     old_mbo_raw = bs_get_no_ref(mbo_bs, prev_last_mbo);
 
-    u32 new_size = ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
+    u32 new_size = is_pair
+        ? ob_pair(orders, exec_order_id, ask_order_id, old_mbo_raw, new_mbo_raw, fills)
+        : ob_canrep(orders, exec_order_id, old_mbo_raw, new_mbo_raw, fills);
     //printf("new size %u\n", new_size);
     //if (exec_order_id == 24){
     //printf("old\n");
@@ -330,11 +380,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     if (!is_cancel) {
         // check exec_order_id to see if we had a partial fill
-        if (is_buy) 
+        if (is_buy)
             cs->reserved_cash += in->quantity * in->price;
-        else 
+        else
             cs->reserved_shares += in->quantity;
     }
+
+    // the pair's bid reserve is handled above (is_buy); add the ask leg's share reserve
+    if (is_pair)
+        cs->reserved_shares += ask_in->quantity;
 
     // honorary wipe out of cancel, assuming it was cancelled successfully
     if (is_can_rep | is_cancel){
@@ -354,6 +408,13 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         // no - this call succeeding implies it went through
     }
 
+    // the block above retired the bid's replaced order; do the same for the ask leg
+    if (is_pair && ask_is_cr) {
+        Order* old_ask = (Order*)fl_get(orders, ask_in->other_id);
+        cs->reserved_shares -= old_ask->quantity;
+        old_ask->quantity = 0;
+    }
+
     // ok unfortunately we do need to do a a few assertions to make sure of stuff before we refactor
     // this explicitly relies on the 2 client $10000000 1000sh initial setup
 
@@ -365,7 +426,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // send special one to self
     //printf("scheduling response %u\n", exec_order_id);
-    schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
+    if (is_pair)
+        // both legs, one delivery
+        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, (before_quantity - in->quantity), ask_order_id, ask_in->price, 0);
+    else
+        schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
 
     // final broadcast send
     for (u32 ci = 0; ci < ho->num_clients; ci++){
