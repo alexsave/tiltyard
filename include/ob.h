@@ -72,6 +72,8 @@ void* mbo_data_start(void* mbo_raw);
 
 // definitely a catch all intended to replace the others
 u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
+// atomic bid + ask replace/cancel in a single new snapshot (bid_order_id, ask_order_id)
+u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 // now returns actual size instead of the new handle. bs is handled by server
 u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_raw);
 u32 ob_execute(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
