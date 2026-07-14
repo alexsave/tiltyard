@@ -10,6 +10,7 @@ typedef uint8_t u8;
 
 typedef int8_t i8;
 typedef int16_t i16;
+typedef int64_t i64;
 
 #endif
 
