@@ -140,20 +140,39 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     return valid;
 }*/
 
-u8 add_precheck(Order* in, ClientSettings* cs, u32 reclaimed_cash, u32 reclaimed_shares){
+u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32 reclaimed_shares){
 
     // 0 - reclaim from cancelled order
     // 1 - figure out full fill "cost"
 
-    MBO* mbo = (MBO*)old_mbo_raw;
+    u8 direction = (in->status >> BUY_DIRECTION_BIT) & 1;
+    u8 is_market = (in->status >> IS_MARKET_BIT) & 1;
+    u8 is_ioc = (in->status >> IOC_BIT) & 1;
+    u8 is_fok = (in->status >> FOK_BIT) & 1;
+    // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
+    u8 is_gtc = !(is_ioc | is_fok);
+    u16 price = in->price;
+
+    if (in->quantity == 0)
+        return 0;
+
+    if (!is_market && price == 0)
+        return 0;
+
+    // a market order has no price to rest at, so it must be told to drop what it cant fill
+    if (is_market && is_gtc)
+        return 0;
 
     u32 q_remain = in->quantity;
 
     // abstract sense of how much it costs to fill the order, either cash or shares
     u32 cost = 0;
 
-    if (direction == 1 && mbo->hi_bid_index < mbo->level_count - 1){
-        for (u16 run = mbo->lo_ask_index; run < mbo->level_count; run++) {
+    // walk the same levels ob will, so what we charge is what actually fills
+    u16 lo_ask_index = mbo->hi_bid_index == MAX_U16 ? 0 : mbo->hi_bid_index + 1;
+
+    if (direction == 1){
+        for (u16 run = lo_ask_index; run < mbo->level_count; run++) {
             MBOIndex* mboi = mbo->levels + run;
             if (!is_market && (q_remain > 0 && price < mboi->price))
                 break;
@@ -163,15 +182,16 @@ u8 add_precheck(Order* in, ClientSettings* cs, u32 reclaimed_cash, u32 reclaimed
 
                 q_remain -= q_remain;
             } else if (q_remain >= mboi->quantity) {
-                cost += mboi->quantity * mboi*price;
+                cost += mboi->quantity * mboi->price;
                 q_remain -= mboi->quantity;
             }
         }
-    } else if (direction == 0 && mbo->hi_bid_index != MAX_U16){
-        for (u16 run = hi_bid_index; run > 0; run--) {
+    } else if (mbo->hi_bid_index != MAX_U16){
+        // 0-- wraps to MAX_U16, the same "ran off the bottom" sentinel as hi_bid_index
+        for (u16 run = mbo->hi_bid_index; run != MAX_U16; run--) {
             MBOIndex* mboi = mbo->levels + run;
 
-            if (!is_market && (q_remain > 0 && price > old_level->price))
+            if (!is_market && (q_remain > 0 && price > mboi->price))
                 break;
 
             if (q_remain < mboi->quantity) {
@@ -227,16 +247,7 @@ u8 add_precheck(Order* in, ClientSettings* cs, u32 reclaimed_cash, u32 reclaimed
 
 }
 
-u8 canrep_precheck(Order* in, ClientSettings* cs) {
-    if (in->quantity == 0)
-        return 0;
-
-    if (!is_market && in->price == 0)
-        return 0;
-
-    if (is_market && is_gtc)
-        return 0;
-
+u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo) {
     // here, we will enforce a valid cancellation
     if (!cancel_precheck(in, orders, mbo))
         return 0;
@@ -244,12 +255,12 @@ u8 canrep_precheck(Order* in, ClientSettings* cs) {
     u32 reclaimed_cash = 0;
     u32 reclaimed_shares = 0;
     Order* cancel = (Order*)fl_get(orders, in->other_id);
-    if ((oc->status >> BUY_DIRECTION_BIT) & 1) 
-        reclaimed_cash += oc->quantity * oc->price;
-    else 
-        reclaimed_shares += oc->quantity;
+    if ((cancel->status >> BUY_DIRECTION_BIT) & 1)
+        reclaimed_cash += cancel->quantity * cancel->price;
+    else
+        reclaimed_shares += cancel->quantity;
 
-    return add_precheck(in, cs, reclaimed_cash, reclaimed_shares);
+    return add_precheck(in, cs, mbo, reclaimed_cash, reclaimed_shares);
 }
 
 
@@ -350,13 +361,13 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             && in->second_quantity <= sh;
         will_modify &= bid_ok & ask_ok;
     } else if (is_can_rep) {
-        will_modify = canrep_precheck(in, orders, (MBO*)old_mbo_raw);
+        will_modify = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw);
         status |= (1 << CAN_REP_BIT);
     } else if (is_cancel) {
         will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
     } else {
-        will_modify = add_precheck(in, cs, 0, 0);
+        will_modify = add_precheck(in, cs, (MBO*)old_mbo_raw, 0, 0);
     }
 
     // honestly if we truly have a method that can handle everything, we can send it here

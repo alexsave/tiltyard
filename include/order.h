@@ -31,12 +31,16 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // could probably all be put in it's own class tbh 
 // yeah why not 
 
+// time in force. neither set is GTC - rest whatever didn't fill, exactly what a plain limit always did
+// a market order has no price to rest at, so it must carry one of these
+static const u8 FOK_BIT = 13; // all of it right now, or none of it
+static const u8 IOC_BIT = 12; // whatever you can right now, drop the rest
 static const u8 ASK_BID_PAIR_BIT = 11; //important for atomic bid and ask update, note that it MUST be bid and ask, with conditions bid < ask
 static const u8 CAN_REP_BIT = 10; // posisbly fold into cancel bit and use quantity check
 static const u8 CANCEL_BIT = 9;
 static const u8 PARTIAL_FILL_BIT = 8;
 static const u8 BUY_DIRECTION_BIT = 7;
-static const u8 IS_MARKET_BIT = 6; // otherwise market
+static const u8 IS_MARKET_BIT = 6; // otherwise limit
 static const u8 HAS_STOP_BIT = 5;
 static const u8 OCO_BIT = 4;
 static const u8 WS_BIT = 3;

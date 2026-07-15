@@ -397,6 +397,8 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
             // assuming rep quanity not zero
         } else {
             u8 is_market = (rep->status >> IS_MARKET_BIT) & 1;
+            // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
+            u8 is_gtc = !(((rep->status >> IOC_BIT) & 1) | ((rep->status >> FOK_BIT) & 1));
 
             // check if marketable
             u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
@@ -434,7 +436,7 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
             // can do ++ or -- as we go
             MBOIndex * old_level = old_mbo->levels + start_search;
             //printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
-            if (is_market || (has_opponents && (multiplier)*(old_level->price) <= multiplier*price)) {
+            if (has_opponents && (is_market || (multiplier)*(old_level->price) <= multiplier*price)) {
                 untouched_below = start_search;
                 untouched_above = top;
                 // this will also take the lowest ask -> replace with bid case
@@ -449,8 +451,8 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                         // we dont want to touch the next level, rest the remaining quantity
                         if (is_gtc) {
                             *op_type = REST_REMAINDER;
-                        } else if (is_ioc) {
-                            // TODO, if its exact but there is quantity remaining, is that fine?
+                        } else {
+                            // ioc/fok. leftover remaining_quantity is fine, EXACT writes no level = dropped
                             *op_type = EXACT;
                         }
                         untouched_above = current_level - multiplier;
@@ -511,7 +513,7 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                             // market FOK - shouldnt happen
                             if (is_gtc)
                                 *op_type = REST_REMAINDER;
-                            else if (is_ioc)
+                            else
                                 *op_type = EXACT;
                             untouched_above = top;
                         }
@@ -520,6 +522,14 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
 
                 }
 
+            } else if (is_market) {
+                // nobody to trade with, and a market order has no price to rest at, so it evaporates.
+                // empty affected range (lui = hui+1) + EXACT means we touch nothing and write no level.
+                // the u16 wrap is intended: a sell into no bids has start_search = MAX_U16, which lands
+                // lui 0 / hui MAX_U16, so hui+1 comes back to 0 and the copy ranges still cover the book
+                *op_type = EXACT;
+                untouched_below = start_search;
+                untouched_above = start_search - multiplier;
             } else {
                 // nonmarketable limit order, will rest
 
