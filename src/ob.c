@@ -881,3 +881,36 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     return ((void*)(new_runner->level)) - new_mbo_raw;
 }
 
+// helper method for market makers and such
+// price is passed in as a shortcut, otherwise we'd have to scan all the levels carefully
+// this is a client helper, and the client will not be able to pass in FL* orders
+// because that is "live" and every client is fundamentally delayed
+// but they should remember the price at least
+
+u32 ob_queue_position(u16 price, u32 order_id, void* mbo_raw) {
+    // how much quantity ahead of this order
+    MBO* mbo = (MBO*)mbo_raw;
+
+    MBOIndex* mboi = mbo->levels;
+    for (u16 i = 0; i < mbo->level_count; i++) {
+        if (mboi->price == price) {
+            MBOLevel * mbol = (MBOLevel*)(mbo_data_start(mbo_raw) + mboi->byte_offset);
+
+            MBOEntry * mboe = mbol->entries;
+            u32 quantity_before = 0;
+            for (u16 j = 0; j < mbol->order_count; j++) {
+                if (mboe->order_id == order_id){
+                    return quantity_before;
+                }
+                quantity_before += mboe->quantity;
+                mboe++;
+            }
+
+            return MAX_U32;
+        }
+        mboi++;
+    }
+    // was not found, it is not in the book
+    return MAX_U32;
+}
+
