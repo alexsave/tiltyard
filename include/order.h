@@ -33,6 +33,7 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 
 // time in force. neither set is GTC - rest whatever didn't fill, exactly what a plain limit always did
 // a market order has no price to rest at, so it must carry one of these
+static const u8 STOP_LIMIT_BIT = 14;// the stop order is a limit stop
 static const u8 FOK_BIT = 13; // all of it right now, or none of it
 static const u8 IOC_BIT = 12; // whatever you can right now, drop the rest
 static const u8 ASK_BID_PAIR_BIT = 11; //important for atomic bid and ask update, note that it MUST be bid and ask, with conditions bid < ask
@@ -65,6 +66,7 @@ typedef struct Order {
     //smh trust me you want to align to 8 bytes, but it'll do it automatically
 
     // in the case that askbid pair is enabled, this will be the ask, and the above will be the bid
+    // if has stop bit is enabled, then this is the stop details
     u16 second_quantity;
     u16 second_price;
     u32 second_id;

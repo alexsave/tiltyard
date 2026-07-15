@@ -454,6 +454,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     printf("\n");
 
 
+    // ok at this point I think can now handle stop orders
+
+    // the idea is do some quick validation on the stop order
+    // let me sleep on this
+    
+
     // mbo_dump + used to create next snapshot
     // us, plus at least the one who sent request?
 
@@ -517,6 +523,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // ok now we have fills and partial_id maybe
     // partial id will be filled last by definiton
+
+    u32 last_trade_price = MAX_U32;
+    
     while (!cb_is_empty(fills)){
         // this guy is actuall responsible for ensuring "orders" fl is updated
 
@@ -528,6 +537,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         u32 q = fill->quantity_filled;//order->quantity;
         u32 cost = order->price * q;
+
+        last_trade_price = order->price;
 
         // later for trade table: we just need direction, price, quantity, time
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
@@ -668,6 +679,23 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     bs_get(mbo_bs, prev_last_mbo);
     //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
+
+    // ok at this point we might've triggered a few stop orders
+    // i think this is the easy part
+    // check last price (
+    if (last_trade_price != MAX_U32) {
+        //if last_trade_price >= pq_peek(asks)
+            // pop asks as market ordersinto the convert holder
+        //if last_trade_price <= pq_peek(bids)
+            // pop bids as market orders into the convert holder
+        // yeah we need a new stop order type
+
+        // price is priority, then the rest of the 32 bits can be like stop id.
+        // lets use an FL for stops
+
+
+        // their validation will be handled later
+    }
 
 
     // i know its ugly
