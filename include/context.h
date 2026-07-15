@@ -26,6 +26,8 @@ typedef struct Context {
     u32 next_order_id;
     Order* next_order_ptr;
     u32 random;
+    u64 real_time_ns;
+    u64 wake_delay_ns;
 } Context;
 
 #endif

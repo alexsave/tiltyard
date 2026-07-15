@@ -67,7 +67,7 @@ int main(int argc, char* argv[]){
 
         uint64_t next = sch_pop(sch);
 
-        uint64_t now_ns = sch_now_ns(sch);
+        context->real_time_ns = sch_now_ns(sch);
         //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
         //log_full(next);
 
@@ -158,16 +158,23 @@ int main(int argc, char* argv[]){
                 }
             }
 
-            if (action == 0) {
-                //printf("reeasing order id\n");
-                fl_release(orders, new_order_id);
-            } else {
+            if (action & 1){
                 empty->client_id = client_id;
                 //empty->flags = 0;
                 u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (new_order_id & PARAM_MASK);
                 u64 delay = client_settings[client_id].processing_time;
 
                 sch_schedule(sch, order_event, delay);
+            } else {
+                //printf("reeasing order id\n");
+                fl_release(orders, new_order_id);
+            }
+
+            // second bit set, for a wakeup call
+            if (action & 2) {
+                u64 delay = context->wake_delay_ns; // client chosen
+                uint64_t wake_event = build_event(CONTROL_TYPE, client_id);
+                sch_schedule(sch, wake_event, delay);
             }
 
 
