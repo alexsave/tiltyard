@@ -3,30 +3,32 @@
 
 #include "types.h"
 
-static const uint64_t P_BITS = 39; 
-static const uint64_t P_SPAN = (uint64_t)1 << P_BITS;
-static const uint64_t P_MASK = P_SPAN - 1;
+static const u64 P_BITS = 39; 
+static const u64 P_SPAN = (u64)1 << P_BITS;
+static const u64 P_MASK = P_SPAN - 1;
 
-static const uint64_t FULL_SIZE_BITS = sizeof(uint64_t) * 8;
+static const u64 FULL_SIZE_BITS = sizeof(u64) * 8;
 
 //"event"
-static const uint64_t E_BITS = FULL_SIZE_BITS - P_BITS;
+static const u64 E_BITS = FULL_SIZE_BITS - P_BITS;
 
 // 0000.1111
 // or like inverse P mask?
-static const uint64_t E_MASK = ((uint64_t)1 << E_BITS) - 1;
+static const u64 E_MASK = ((u64)1 << E_BITS) - 1;
 
 // number of fast buckets
-static const uint8_t BUCKET_BITS = 3;
-static const uint8_t SCH_BUCKETS = 1 << BUCKET_BITS;
-static const uint8_t BUCKET_MASK = SCH_BUCKETS - 1;
+static const u8 BUCKET_BITS = 3;
+static const u8 SCH_BUCKETS = 1 << BUCKET_BITS;
+static const u8 BUCKET_MASK = SCH_BUCKETS - 1;
 
-
-static const uint64_t S_TO_NS = 1000000000;
+static const u64 S_TO_NS = 1000000000;
+static const u64 MIN_TO_NS = S_TO_NS * 60;
+static const u64 H_TO_NS = MIN_TO_NS * 60;
+static const u64 DAY_TO_NS = H_TO_NS * 24;
 
 //type bits
-static const uint8_t T_BITS = 2;
-static const uint8_t T_MASK = (1 << T_BITS) - 1;
+static const u8 T_BITS = 2;
+static const u8 T_MASK = (1 << T_BITS) - 1;
 
 static const uint32_t PARAM_BITS = FULL_SIZE_BITS - P_BITS - T_BITS;
 static const u32 MAX_PARAM = (1 << PARAM_BITS) - 1;
