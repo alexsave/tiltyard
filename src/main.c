@@ -44,13 +44,16 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 2*(24*60*60) *S_TO_NS);
+    sch_schedule(sch, kill_event, 2 * DAY_TO_NS);
+
+    u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
+    sch_schedule(sch, news_event, 7 * DAY_TO_NS);
 
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;
     for(u32 i = 0; i < ho->num_clients; i++) {
         uint64_t client_id = i; 
-        
+
         uint64_t boot_event = build_event(CONTROL_TYPE, client_id);
         sch_schedule(sch, boot_event, client_settings[i].initial_wake);
     }
@@ -136,7 +139,7 @@ int main(int argc, char* argv[]){
                 context->order_id = response.order_id;
                 // they cant use it anyways
                 //if (response.order_id != MAX_U32)
-                    //context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
+                //context->response_order_ptr = (Order*)fl_get(orders, response.order_id);
             }
 
             //printf("sending to client %u order %u\n", client_id, response.order_id);
@@ -226,6 +229,19 @@ int main(int argc, char* argv[]){
                 // charge interest on borrowed shorts
             } else if (control_id == CONTROL_PARAM_EOM) {
                 // charge clients subscription costs
+
+            } else if (control_id == CONTROL_PARAM_NEWS) {
+                // randomly set context to some value, and do not change it until next
+
+                context->news_signal = context->random & MAX_U8;
+                context->last_news_ns = context->real_time_ns;
+
+                // 1 to 32 days out, because 32 is easy
+                // this is debatable, and could be any values or distribution
+                u64 news_delay = (1+(context->random & 31))* DAY_TO_NS;
+
+                u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
+                sch_schedule(sch, news_event, news_delay);
 
             } else if (control_id == CONTROL_PARAM_KILL) {
                 printf("kill event triggered\n");

@@ -28,6 +28,11 @@ typedef struct Context {
     u32 random;
     u64 real_time_ns;
     u64 wake_delay_ns;
+
+    // abstract 0-255 scale of how well the $TYD company is doing
+    // clients can react to it however they want
+    u8 news_signal;
+    u64 last_news_ns;
 } Context;
 
 #endif
