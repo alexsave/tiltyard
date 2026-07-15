@@ -151,7 +151,8 @@ int main(int argc, char* argv[]){
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 
             // ok they read the response order id, if it's rejected free it as its useless
-            if ((context->status >> REJECT_BIT) & 1) {
+            // a ping/ws ack never reached the book either, so it frees the same way
+            if (((context->status >> REJECT_BIT) & 1) || ((context->status >> CONTROL_BIT) & 1)) {
                 fl_release(orders, response.order_id);
             }
 

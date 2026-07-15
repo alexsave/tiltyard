@@ -33,6 +33,8 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 
 // time in force. neither set is GTC - rest whatever didn't fill, exactly what a plain limit always did
 // a market order has no price to rest at, so it must carry one of these
+// set by the server on a ping/ws ack: nothing rests, so the client's slot is freed
+static const u8 CONTROL_BIT = 15;
 static const u8 STOP_LIMIT_BIT = 14;// the stop order is a limit stop
 static const u8 FOK_BIT = 13; // all of it right now, or none of it
 static const u8 IOC_BIT = 12; // whatever you can right now, drop the rest

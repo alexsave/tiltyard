@@ -21,8 +21,9 @@ static const u8 REJ_UNKNOWN_ORDER = 7; // not resting in the book
 static const u8 REJ_NOT_YOUR_ORDER = 8;
 static const u8 REJ_ORDER_ALREADY_DONE = 9; // already filled or rejected
 
-// accepted, then went away. a real venue calls these cancels, not rejects,
-// so they ride on REJECT_BIT until there's a CANCELLED_BIT (bit 14 is free)
+// accepted, then went away. a real venue calls these cancels, not rejects, so they
+// ride on REJECT_BIT until there's a CANCELLED_BIT - and status is a full u16 now,
+// so that bit has to come from somewhere
 static const u8 CXL_IOC_UNFILLED = 10;
 static const u8 CXL_FOK_KILLED = 11;
 

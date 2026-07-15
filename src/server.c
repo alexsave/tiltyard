@@ -381,6 +381,16 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
     u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
 
+    // a ping / ws toggle carries no quantity on purpose - it was never an order, so it skips
+    // the prechecks and the book entirely. the ws side effect above already happened, and
+    // nothing rests, so CONTROL_BIT tells the client to hand the slot straight back.
+    // note is_toggle_ws is the masked bit, not 0/1, so these have to be logical ands
+    if ((is_ping || is_toggle_ws) && in->quantity == 0 && !is_pair && !is_cancel && !is_can_rep) {
+        status |= (1 << CONTROL_BIT);
+        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0, REASON_NONE);
+        return;
+    }
+
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     if (is_pair) {
