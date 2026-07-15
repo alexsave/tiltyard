@@ -18,6 +18,8 @@
 #include "rand.h"
 #include "fill.h"
 
+#include "mbp.h"
+
 // yeah you need these two to initialize the server, cuz really it initalizes everything
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
     ServerContext* sc = malloc(sizeof(ServerContext));
@@ -30,11 +32,19 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->client_allocations = client_allocations;
 
     sc->mbo_bs = bs_init(32768);
-
     void* mbo_address = 0;
     sc->last_mbo = bs_reserve(sc->mbo_bs, sizeof(MBO), 1, &mbo_address);
     ((MBO*)mbo_address)->level_count = 0;
     ((MBO*)mbo_address)->hi_bid_index = MAX_U16;
+
+    sc->mbp_bs = bs_init(32768);
+    void* mbp_address = 0;
+    sc->last_mbp = bs_reserve(sc->mbp_bs, sizeof(MBP), 1, &mbp_address);
+    ((MBP*)mbp_address)->level_count = 0;
+    ((MBP*)mbp_address)->hi_bid_index = MAX_U16;
+    
+
+
 
     sc->executing = 0;
     sc->sw_queue = cb_init(sizeof(u32));
@@ -53,6 +63,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 }
 
 void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantity_filled, u32 order_id, u16 price) {
+    // this assumes that all client are mbo subscribers
     bs_bump_refs(sc->mbo_bs, sc->last_mbo);
     Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled, .price = price};
     u32 response_id = fl_insert(sc->responses, &r);
@@ -412,6 +423,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // us, plus at least the one who sent request?
 
     u32 prev_last_mbo = sc->last_mbo;
+
     //if(exec_order_id > 2000000){
     //mbo_dump(mbo);
     //exit(1);
@@ -489,6 +501,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         u32 q = fill->quantity_filled;//order->quantity;
         u32 cost = order->price * q;
 
+        // later for trade table: we just need direction, price, quantity, time
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
 
         // the cancelled trade cannot show up here
@@ -578,8 +591,30 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // this explicitly relies on the 2 client $10000000 1000sh initial setup
 
 
+    // might as well create a new MBP here. all we need is the new mbo
+
+    MBO* new_mbo = (MBO*)new_mbo_raw;
+    
+    u32 new_size = sizeof(MBP) + (new_mbo->level_count) * sizeof(MBPIndex);
+    // move to mbp.c?
+    void* new_mbp_raw;
+    u32 next_last_mbp = bs_reserve(mbp_bs, new_size, 1, &new_mbp_raw);
+
+    MBP* new_mbp = (MBP*)new_mbp_raw;
+    new_mbp->level_count = new_mbo->level_count;
+    new_mbp->hi_bid_index = new_mbo->hi_bid_index;
+
+    for (u16 i = 0; i < new_mbo->level_count; i++) {
+        (new_mbp->levels + i)->price = (new_mbo->levels + i)->price;
+        (new_mbp->quantity + i)->price = (new_mbo->quantity + i)->price;
+    }
+    
+    bs_get(mbp_bs, sc->last_mbp);
+    sc->last_mbp = next_last_mbp;
+
     bs_get(mbo_bs, prev_last_mbo);
     //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
+
 
     // i know its ugly
 

@@ -36,6 +36,10 @@ typedef struct ServerContext {
 
     u64* rand;
 
+    // mirror of MBO
+    u32 last_mbp;
+    BS* mbp_bs;
+
 } ServerContext;
 
 

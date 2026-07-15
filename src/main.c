@@ -62,6 +62,8 @@ int main(int argc, char* argv[]){
     FL* responses = sc->responses;
     BS* mbo_bs = sc->mbo_bs;
 
+    BS* mbp_bs = sc->mbp_bs;
+
     Context* context = malloc(sizeof(Context));
 
     while(1){
@@ -135,6 +137,7 @@ int main(int argc, char* argv[]){
                 // this just wakes them up
                 context->mbo_snapshot = 0;
             } else {
+                // for some clients, they need to get the MBP. But that's later
                 context->mbo_snapshot = bs_get(mbo_bs, snapshot_id);
                 context->order_id = response.order_id;
                 // they cant use it anyways
