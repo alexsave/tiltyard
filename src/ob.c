@@ -445,9 +445,6 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                     old_level = old_mbo->levels + current_level;
 
                     if (!is_market && (remaining_quantity > 0 && multiplier*price < multiplier*old_level->price)) {
-                        // for later limits:
-                        // GTC - rest remainder (current behavior)
-                        // IOC - should become EXACT
                         // we dont want to touch the next level, rest the remaining quantity
                         if (is_gtc) {
                             *op_type = REST_REMAINDER;
@@ -791,13 +788,15 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
 
     // hi_bid_index = (bid levels in the new book) - 1, counted region by region:
     //   lower untouched [0, bid.lui)      -> all bids                        : bid.lui
-    //   bid op                            -> rests a bid unless it fully filled
+    //   bid op                            -> rests a bid unless it left no level (EXACT,
+    //                                        CAN_WIPE) or the level it left is a bitten ask
+    //                                        (FILL_SOME)
     //   middle untouched (bid.hui, ask.lui) -> bids up to the old boundary
     //   ask op                            -> only FILL_SOME leaves a (bitten) bid
     //   upper untouched (ask.hui, end]    -> all asks                        : 0
     u16 old_hbi = old_mbo->hi_bid_index;
     u16 bids = bid.lui
-             + (bid.op_type != FILL_SOME && bid.op_type != EXACT)
+             + (bid.op_type != FILL_SOME && ob_op_level_delta(bid.op_type))
              + (ask.op_type == FILL_SOME);
     if (old_hbi != MAX_U16) {
         int cap = (int)ask.lui - 1;            // last middle index

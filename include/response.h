@@ -22,6 +22,8 @@ typedef struct Response {
     u32 second_order_id;
     u16 second_price;
     u32 second_quantity_filled;
+
+    u8 rej_reason;
 } Response;
 
 #endif

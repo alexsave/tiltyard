@@ -33,6 +33,8 @@ typedef struct Context {
     // clients can react to it however they want
     u8 news_signal;
     u64 last_news_ns;
+
+    u8 rej_reason;
 } Context;
 
 #endif
