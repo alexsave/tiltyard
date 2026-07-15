@@ -329,13 +329,14 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     if (is_pair) {
-        // if is_pair is set, we will explicitly ignore the is_market bit, because that is just a fucking headache
+        // both legs of a pair are resting quotes, so a market pair is nonsense - reject it
+        u8 is_market = (in->status >> IS_MARKET_BIT) & 1;
 
         // the two legs must be ordered (bid strictly below ask); a replacing leg needs a valid
         // cancel. a stale / nonexistent / not-ours cancel id fails cancel_precheck and rejects.
         u8 bid_cancel_ok = !is_can_rep || cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         u8 ask_cancel_ok = !ask_is_cr  || cancel_precheck(ask_in, orders, (MBO*)old_mbo_raw);
-        will_modify = (in->price < in->second_price) & bid_cancel_ok & ask_cancel_ok;
+        will_modify = (in->price < in->second_price) & bid_cancel_ok & ask_cancel_ok & !is_market;
 
         // whatever we cancel frees its reserve, which helps fund the new legs: a replace that
         // raises the bid can exceed current buying power yet still fit once the old bid's
@@ -376,9 +377,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
 
     u8 is_buy = (in->status >> BUY_DIRECTION_BIT) & 1;
+    u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
     u32 before_quantity = in->quantity;
     u32 before_ask_quantity = is_pair ? ask_in->quantity : 0;
-    u32 in_cost = before_quantity * in->price;
 
     // next big challenge cancelreplace orders
     // so now we need like a cancel id to bundle into this
@@ -422,7 +423,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if (is_cancel) {
         printf("cancel order #%u ", in->other_id);
     } else {
-        printf("limit %s %ush @ $%u ", is_buy ? "buy" : "sell", in->quantity, in->price, in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+        printf("%s %s %ush @ $%u ", ((in->status >> IS_MARKET_BIT) & 1) ? "market" : "limit", is_buy ? "buy" : "sell", in->quantity, in->price);
         if (is_can_rep) {
             printf("+ cancel order %u ", in->other_id);
         }
@@ -491,13 +492,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // we still need to go through and fill the orders we hit
     // just dont update the incoming order client after this "taker"
 
-    if (in->quantity < before_quantity){
-        status |= (1 << FILL_BIT);
-        if (in->quantity > 0)
-            status |= (1 << PARTIAL_FILL_BIT);
-    }
-
-
     // ok now we have fills and partial_id maybe
     // partial id will be filled last by definiton
     while (!cb_is_empty(fills)){
@@ -555,11 +549,21 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     }
 
-    // gtc - leave whatever we have in the order
+    // gtc - leave whatever we have in the order, it rested
     // fok - order should be fully filled, by above loop
-    // ioc - explicitly wipe it out here. kinda up to the client to know that ioc return + 0 quantity is exactly what they requested. or should we leave it, so that they know how much exactly was filled? yeah leave it
-    //if (is_ioc)
-        //taker->quantity = 0;
+    // ioc - ob already dropped the residual, so wipe it here to match. the client still learns exactly
+    // how much filled from quantity_filled on the response, and leaving it on would reserve
+    // cash/shares below for quantity that isn't in the book
+    u32 filled = before_quantity - in->quantity;
+    if (!is_gtc)
+        in->quantity = 0;
+
+    // only after the loop above has in->quantity actually come down. whatever is left rested = partial
+    if (filled){
+        status |= (1 << FILL_BIT);
+        if (in->quantity > 0)
+            status |= (1 << PARTIAL_FILL_BIT);
+    }
 
     if (!is_cancel) {
         // check exec_order_id to see if we had a partial fill
@@ -606,10 +610,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     MBO* new_mbo = (MBO*)new_mbo_raw;
     
-    u32 new_size = sizeof(MBP) + (new_mbo->level_count) * sizeof(MBPIndex);
+    u32 mbp_size = sizeof(MBP) + (new_mbo->level_count) * sizeof(MBPIndex);
     // move to mbp.c?
     void* new_mbp_raw;
-    u32 next_last_mbp = bs_reserve(mbp_bs, new_size, 1, &new_mbp_raw);
+    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_size, 1, &new_mbp_raw);
 
     MBP* new_mbp = (MBP*)new_mbp_raw;
     new_mbp->level_count = new_mbo->level_count;
@@ -617,10 +621,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     for (u16 i = 0; i < new_mbo->level_count; i++) {
         (new_mbp->levels + i)->price = (new_mbo->levels + i)->price;
-        (new_mbp->quantity + i)->price = (new_mbo->quantity + i)->price;
+        (new_mbp->levels + i)->quantity = (new_mbo->levels + i)->quantity;
     }
     
-    bs_get(mbp_bs, sc->last_mbp);
+    bs_get(sc->mbp_bs, sc->last_mbp);
     sc->last_mbp = next_last_mbp;
 
     bs_get(mbo_bs, prev_last_mbo);
@@ -633,9 +637,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     //printf("scheduling response %u\n", exec_order_id);
     if (is_pair)
         // both legs, one delivery, each with its own filled quantity
-        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, (before_quantity - in->quantity), ask_order_id, ask_in->price, (before_ask_quantity - ask_in->quantity));
+        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, ask_order_id, ask_in->price, (before_ask_quantity - ask_in->quantity));
     else
-        schedule_response(sc, in->client_id, status, (before_quantity - in->quantity), exec_order_id, in->price);
+        schedule_response(sc, in->client_id, status, filled, exec_order_id, in->price);
 
     // final broadcast send
     for (u32 ci = 0; ci < ho->num_clients; ci++){
@@ -761,6 +765,7 @@ void server_free(ServerContext* sc) {
     holder_free(sc->ho);
     sch_free(sc->sch);
     bs_free(sc->mbo_bs);
+    bs_free(sc->mbp_bs);
     free(sc->client_settings);
     fl_free(sc->responses);
     fl_free(sc->orders);

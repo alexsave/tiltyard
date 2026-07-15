@@ -3,6 +3,11 @@
 
 #include "types.h"
 
+typedef struct MBPIndex {
+    u16 price;
+    u32 quantity;
+} MBPIndex;
+
 typedef struct MBP {
     u16 hi_bid_index;
     u16 level_count;
@@ -10,10 +15,6 @@ typedef struct MBP {
     // after this is the actual order data
 } MBP;
 
-typedef struct MBPIndex {
-    u16 price;
-    u32 quantity;
-} MBPIndex
 
 #endif
 

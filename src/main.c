@@ -62,9 +62,8 @@ int main(int argc, char* argv[]){
     FL* responses = sc->responses;
     BS* mbo_bs = sc->mbo_bs;
 
-    BS* mbp_bs = sc->mbp_bs;
-
-    Context* context = malloc(sizeof(Context));
+    // calloc, else news_signal is garbage until the first news event fires
+    Context* context = calloc(1, sizeof(Context));
 
     while(1){
         rand_next(sc->rand);
