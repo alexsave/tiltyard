@@ -55,19 +55,6 @@ typedef struct MBORunner {
     u16 index;
 } MBORunner;
 
-
-// maybe therse are enough maybe no
-typedef struct MBPLevel {
-    u16 price;
-    u16 quantity;
-} MBPLevel;
-
-typedef struct MBP {
-    u8 hi_bid_index;
-    u8 level_count;
-    MBPLevel levels[];
-} MBP;
-
 void* mbo_data_start(void* mbo_raw);
 
 // definitely a catch all intended to replace the others
