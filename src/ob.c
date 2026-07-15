@@ -461,9 +461,9 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
 
                     // could be zero, the same as eating the entire level
                     u32 effective_level_quantity = old_level->quantity;
-                    // TODO: pairs allow us to do order book operations even if nothing is cancelled
-                    // Verify that this is not the case if the cancel order is not found
-                    // (cancel order must not exist or its price reset to zero or is_can_rep set to false)
+                    // pairs let us operate on the book even when nothing is cancelled, and then can is 0.
+                    // is_can_rep is only ever set here once cancel_precheck found the order resting in the
+                    // book, so if we subtract, the quantity really is on this level
                     if (is_can_rep && old_level->price == can->price)
                         effective_level_quantity -= can->quantity;
 
