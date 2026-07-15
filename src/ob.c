@@ -359,12 +359,212 @@ u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_
     return ((void*)(new_runner->level)) - new_mbo_raw;
 }
 
-// defined below, used by ob_pair before its definition
+// figure out which old-mbo levels a single side (bid OR ask) touches, and how
+// lui/hui are the untouched indicies bracketing the affected range, op_type says what to do
+// remaining_out gets the leftover quantity after any fills, modified_level the level FILL_SOME bit into
 void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                        u8 is_can_rep, u8 is_cancel, u32 cancel_id,
                        u16 cancel_index, u8 cancel_was_sole,
                        u16* lui, u16* hui, u8* op_type,
-                       u16* modified_level, u16* remaining_out, CB* fills);
+                       u16* modified_level, u16* remaining_out, CB* fills) {
+
+    u16 price = rep->price;
+    u16 remaining_quantity = rep->quantity;
+
+    // sentinel: the "put it at the bottom" fallback below checks for this, so it
+    // must not start as a real op (0 == NEW). callers pass a zero-initialized field.
+    *op_type = OP_TYPE_INVALID;
+
+
+    // somewhat special case
+    if (!is_can_rep && is_cancel) {
+        if (cancel_was_sole)
+            *op_type = CAN_WIPE;
+        else
+            *op_type = CAN_NO_WIPE;
+        *lui = cancel_index;
+        *hui = cancel_index;
+    } else {
+
+        if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
+            *lui = cancel_index;
+            *hui = cancel_index;
+            if (rep->quantity > can->quantity)
+                *op_type = CAN_REP;
+            else
+                *op_type = SHRINK;
+
+            // assuming rep quanity not zero
+        } else {
+            u8 is_market = (rep->status >> IS_MARKET_BIT) & 1;
+
+            // check if marketable
+            u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
+
+            i16 multiplier = 0;
+            u16 hi_bid_index = old_mbo->hi_bid_index;
+            u16 lo_ask_index = hi_bid_index + 1;
+
+            u16 start_search;
+            u16 bottom;
+            u16 top;
+
+            u8 has_opponents = 1;
+
+            if (direction == 1) {
+                start_search = lo_ask_index;
+                multiplier = 1;
+                //more deep
+                bottom = 0;
+                top = old_mbo->level_count - 1;
+
+                has_opponents = lo_ask_index < old_mbo->level_count;
+            } else {
+                start_search = hi_bid_index;
+                multiplier = -1;
+                bottom = old_mbo->level_count-1;
+                top = 0;
+                has_opponents = hi_bid_index != MAX_U16;
+            }
+
+            u16 untouched_below = start_search;
+            u16 untouched_above = top;
+
+
+            // can do ++ or -- as we go
+            MBOIndex * old_level = old_mbo->levels + start_search;
+            //printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
+            if (is_market || (has_opponents && (multiplier)*(old_level->price) <= multiplier*price)) {
+                untouched_below = start_search;
+                untouched_above = top;
+                // this will also take the lowest ask -> replace with bid case
+
+                for(u16 current_level = start_search; ; current_level += multiplier) {
+                    old_level = old_mbo->levels + current_level;
+
+                    if (!is_market && (remaining_quantity > 0 && multiplier*price < multiplier*old_level->price)) {
+                        // for later limits:
+                        // GTC - rest remainder (current behavior)
+                        // IOC - should become EXACT
+                        // we dont want to touch the next level, rest the remaining quantity
+                        if (is_gtc) {
+                            *op_type = REST_REMAINDER;
+                        } else if (is_ioc) {
+                            // TODO, if its exact but there is quantity remaining, is that fine?
+                            *op_type = EXACT;
+                        }
+                        untouched_above = current_level - multiplier;
+                        break;
+                    }
+
+                    // could be zero, the same as eating the entire level
+                    u32 effective_level_quantity = old_level->quantity;
+                    // TODO: pairs allow us to do order book operations even if nothing is cancelled
+                    // Verify that this is not the case if the cancel order is not found
+                    // (cancel order must not exist or its price reset to zero or is_can_rep set to false)
+                    if (is_can_rep && old_level->price == can->price)
+                        effective_level_quantity -= can->quantity;
+
+                    if (effective_level_quantity >= remaining_quantity) {
+                        untouched_above = current_level;
+                    }
+                    //printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
+
+                    if (effective_level_quantity <= remaining_quantity) {
+                        // fill
+                        // this looks like a good use case for runners
+                        void* old_run = (mbo_data_start((void*)old_mbo) + old_level->byte_offset);
+
+                        MBOLevel* mod_level = (MBOLevel*)old_run;
+                        for (u16 i = 0; i < mod_level->order_count; i++) {
+                            MBOEntry * entry = mod_level->entries + i;
+                            if (is_can_rep && entry->order_id == cancel_id)
+                                continue;
+                            Fill f = { 
+                                .order_id = entry->order_id,
+                                .quantity_filled = entry->quantity};
+                            cb_queue(fills, &f);
+                            //printf("f filling %u\n", entry->order_id);
+                        }  
+                    }
+
+                    if (effective_level_quantity > remaining_quantity){
+                        //printf("effective level quantity more than remaining\n");
+                        *op_type = FILL_SOME;
+                        *modified_level = current_level;
+                        break;
+                    } else if (effective_level_quantity == remaining_quantity) {
+                        remaining_quantity -= effective_level_quantity;
+                        *op_type = EXACT;
+                        break;
+                    } else {
+                        remaining_quantity -= effective_level_quantity;
+                    }
+
+                    if (current_level == top) {
+                        if (remaining_quantity > 0) {
+                            // limit GTC - rest remainder
+                            // limit IOC - scrap remainder - make it EXACT
+                            // limit FOK - shouldnt't happen
+                            // market GTC - impossible
+                            // market IOC - EXACT too
+                            // market FOK - shouldnt happen
+                            if (is_gtc)
+                                *op_type = REST_REMAINDER;
+                            else if (is_ioc)
+                                *op_type = EXACT;
+                            untouched_above = top;
+                        }
+                        break;
+                    }
+
+                }
+
+            } else {
+                // nonmarketable limit order, will rest
+
+                if (direction == 1 && hi_bid_index != MAX_U16 && old_mbo->levels[hi_bid_index].price < price) {
+                    *op_type = NEW;
+                    untouched_below = hi_bid_index + 1;
+                    untouched_above = hi_bid_index;
+                } else {
+                    for(; start_search != bottom; start_search -= multiplier) {
+                        u16 level_price = old_mbo->levels[(u16)(start_search-multiplier)].price;
+
+                        if (price*multiplier == level_price*multiplier) {
+                            // does this math work out? or is this bytes?
+                            *op_type = APPEND;
+                            untouched_below = start_search-multiplier;
+                            untouched_above = start_search-multiplier;
+
+                            break;
+                        }       
+                        if (price*multiplier > level_price*multiplier) {
+                            // this will include all levels currently in old_mbo
+                            *op_type = NEW; 
+                            untouched_below = start_search;
+                            untouched_above = start_search-multiplier;
+                            break;
+                        } 
+                    }
+
+
+                    // did not find, it needs to be put at bottom
+                    if (*op_type == OP_TYPE_INVALID) {
+                        *op_type = NEW;
+                        untouched_below = bottom;
+                        untouched_above = bottom - multiplier; // iffy on this
+                    }
+                }
+
+            }
+            *lui = direction == BUY ? untouched_below : untouched_above;
+            *hui = direction == BUY ? untouched_above : untouched_below;
+        }
+    }
+
+    *remaining_out = remaining_quantity;
+}
 
 // one side (bid or ask) of a book mutation: the request + where it lands
 typedef struct OBSide {
@@ -600,187 +800,6 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
     return ((void*)(new_runner->level)) - new_mbo_raw;
 }
 
-// figure out which old-mbo levels a single side (bid OR ask) touches, and how
-// lui/hui are the untouched indicies bracketing the affected range, op_type says what to do
-// remaining_out gets the leftover quantity after any fills, modified_level the level FILL_SOME bit into
-void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
-                       u8 is_can_rep, u8 is_cancel, u32 cancel_id,
-                       u16 cancel_index, u8 cancel_was_sole,
-                       u16* lui, u16* hui, u8* op_type,
-                       u16* modified_level, u16* remaining_out, CB* fills) {
-
-    u16 price = rep->price;
-    u16 remaining_quantity = rep->quantity;
-
-    // sentinel: the "put it at the bottom" fallback below checks for this, so it
-    // must not start as a real op (0 == NEW). callers pass a zero-initialized field.
-    *op_type = OP_TYPE_INVALID;
-
-    // somewhat special case
-    if (!is_can_rep && is_cancel) {
-        if (cancel_was_sole)
-            *op_type = CAN_WIPE;
-        else
-            *op_type = CAN_NO_WIPE;
-        *lui = cancel_index;
-        *hui = cancel_index;
-    } else {
-
-        if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
-            *lui = cancel_index;
-            *hui = cancel_index;
-            if (rep->quantity > can->quantity)
-                *op_type = CAN_REP;
-            else
-                *op_type = SHRINK;
-
-            // assuming rep quanity not zero
-        } else {
-            // check if marketable
-            u8 direction = (rep->status >> BUY_DIRECTION_BIT) & 1;
-
-            i16 multiplier = 0;
-            u16 hi_bid_index = old_mbo->hi_bid_index;
-            u16 lo_ask_index = hi_bid_index + 1;
-
-            u16 start_search;
-            u16 bottom;
-            u16 top;
-
-            u8 has_opponents = 1;
-
-            if (direction == 1) {
-                start_search = lo_ask_index;
-                multiplier = 1;
-                //more deep
-                bottom = 0;
-                top = old_mbo->level_count - 1;
-
-                has_opponents = lo_ask_index < old_mbo->level_count;
-            } else {
-                start_search = hi_bid_index;
-                multiplier = -1;
-                bottom = old_mbo->level_count-1;
-                top = 0;
-                has_opponents = hi_bid_index != MAX_U16;
-            }
-
-            u16 untouched_below = start_search;
-            u16 untouched_above = top;
-
-
-            // can do ++ or -- as we go
-            MBOIndex * old_level = old_mbo->levels + start_search;
-            //printf("has opps %u old lvl price %u price %u\n", has_opponents, old_level->price, price);
-            if (has_opponents && (multiplier)*(old_level->price) <= multiplier*price) {
-                untouched_below = start_search;
-                untouched_above = top;
-                // this will also take the lowest ask -> replace with bid case
-
-                for(u16 current_level = start_search; ; current_level += multiplier) {
-                    old_level = old_mbo->levels + current_level;
-
-                    if (remaining_quantity > 0 && multiplier*price < multiplier*old_level->price) {
-                        *op_type = REST_REMAINDER;
-                        untouched_above = current_level - multiplier;
-                        break;
-                    }
-
-                    // could be zero, the same as eating the entire level
-                    u32 effective_level_quantity = old_level->quantity;
-                    if (is_can_rep && old_level->price == can->price)
-                        effective_level_quantity -= can->quantity;
-
-                    if (effective_level_quantity >= remaining_quantity) {
-                        untouched_above = current_level;
-                    }
-                    //printf("current level %u effective level %u remaining q %u\n", current_level, effective_level_quantity, remaining_quantity);
-
-                    if (effective_level_quantity <= remaining_quantity) {
-                        // fill
-                        // this looks like a good use case for runners
-                        void* old_run = (mbo_data_start((void*)old_mbo) + old_level->byte_offset);
-
-                        MBOLevel* mod_level = (MBOLevel*)old_run;
-                        for (u16 i = 0; i < mod_level->order_count; i++) {
-                            MBOEntry * entry = mod_level->entries + i;
-                            if (is_can_rep && entry->order_id == cancel_id)
-                                continue;
-                            Fill f = { 
-                                .order_id = entry->order_id,
-                                .quantity_filled = entry->quantity};
-                            cb_queue(fills, &f);
-                            //printf("f filling %u\n", entry->order_id);
-                        }  
-                    }
-
-                    if (effective_level_quantity > remaining_quantity){
-                        //printf("effective level quantity more than remaining\n");
-                        *op_type = FILL_SOME;
-                        *modified_level = current_level;
-                        break;
-                    } else if (effective_level_quantity == remaining_quantity) {
-                        remaining_quantity -= effective_level_quantity;
-                        *op_type = EXACT;
-                        break;
-                    } else {
-                        remaining_quantity -= effective_level_quantity;
-                    }
-
-                    if (current_level == top) {
-                        if (remaining_quantity > 0) {
-                            *op_type = REST_REMAINDER;
-                            untouched_above = top;
-                        }
-                        break;
-                    }
-
-                }
-
-            } else {
-
-                if (direction == 1 && hi_bid_index != MAX_U16 && old_mbo->levels[hi_bid_index].price < price) {
-                    *op_type = NEW;
-                    untouched_below = hi_bid_index + 1;
-                    untouched_above = hi_bid_index;
-                } else {
-                    for(; start_search != bottom; start_search -= multiplier) {
-                        u16 level_price = old_mbo->levels[(u16)(start_search-multiplier)].price;
-
-                        if (price*multiplier == level_price*multiplier) {
-                            // does this math work out? or is this bytes?
-                            *op_type = APPEND;
-                            untouched_below = start_search-multiplier;
-                            untouched_above = start_search-multiplier;
-
-                            break;
-                        }       
-                        if (price*multiplier > level_price*multiplier) {
-                            // this will include all levels currently in old_mbo
-                            *op_type = NEW; 
-                            untouched_below = start_search;
-                            untouched_above = start_search-multiplier;
-                            break;
-                        } 
-                    }
-
-
-                    // did not find, it needs to be put at bottom
-                    if (*op_type == OP_TYPE_INVALID) {
-                        *op_type = NEW;
-                        untouched_below = bottom;
-                        untouched_above = bottom - multiplier; // iffy on this
-                    }
-                }
-
-            }
-            *lui = direction == BUY ? untouched_below : untouched_above;
-            *hui = direction == BUY ? untouched_above : untouched_below;
-        }
-    }
-
-    *remaining_out = remaining_quantity;
-}
 
 u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
 

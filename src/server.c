@@ -111,7 +111,7 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
 }
 
 // the usual stuff
-u8 add_precheck(Order* in, ClientSettings* cs) {
+/*u8 add_precheck(Order* in, ClientSettings* cs) {
     u8 valid;
 
     u32 before_quantity = in->quantity;
@@ -127,7 +127,120 @@ u8 add_precheck(Order* in, ClientSettings* cs) {
     else 
         valid = has_shares & is_valid_quantity & is_valid_price;
     return valid;
+}*/
+
+u8 add_precheck(Order* in, ClientSettings* cs, u32 reclaimed_cash, u32 reclaimed_shares){
+
+    // 0 - reclaim from cancelled order
+    // 1 - figure out full fill "cost"
+
+    MBO* mbo = (MBO*)old_mbo_raw;
+
+    u32 q_remain = in->quantity;
+
+    // abstract sense of how much it costs to fill the order, either cash or shares
+    u32 cost = 0;
+
+    if (direction == 1 && mbo->hi_bid_index < mbo->level_count - 1){
+        for (u16 run = mbo->lo_ask_index; run < mbo->level_count; run++) {
+            MBOIndex* mboi = mbo->levels + run;
+            if (!is_market && (q_remain > 0 && price < mboi->price))
+                break;
+
+            if (q_remain < mboi->quantity) {
+                cost += q_remain * mboi->price;
+
+                q_remain -= q_remain;
+            } else if (q_remain >= mboi->quantity) {
+                cost += mboi->quantity * mboi*price;
+                q_remain -= mboi->quantity;
+            }
+        }
+    } else if (direction == 0 && mbo->hi_bid_index != MAX_U16){
+        for (u16 run = hi_bid_index; run > 0; run--) {
+            MBOIndex* mboi = mbo->levels + run;
+
+            if (!is_market && (q_remain > 0 && price > old_level->price))
+                break;
+
+            if (q_remain < mboi->quantity) {
+                cost += q_remain;
+
+                q_remain -= q_remain;
+            } else if (q_remain >= mboi->quantity) {
+                cost += mboi->quantity;
+                q_remain -= mboi->quantity;
+            }
+        }
+    }
+
+
+    // 2. if liquidity isn't enough branch on GTC/IOC/FOK
+
+    //is_gtc is_ioc is_fok
+
+    if (q_remain) {
+        if (is_gtc) {
+            // we rest the remaining, continue to order book
+        } else if (is_ioc) {
+            // we discard the remaining, continue to order book
+        } else if (is_fok) {
+            // not enough liquidity for full order, drop it
+            // yes put in separate method
+            return 0;
+        }
+    }
+
+    // 3. if cost is too much, reject
+
+    // if we weant to rest the remainder, then we actually need to add that remainder to the cost
+
+    if (is_gtc){
+        // add the resting cost
+        if (direction == 1)
+            cost += q_remain * in->price;
+        else 
+            cost += q_remain;
+    }
+    // for ioc, we just ignore the remaining quantity
+
+    u8 valid;
+    if (direction == 1) {
+        // we have enough cash to buy
+        valid = cs->cash - cs->reserved_cash + reclaimed_cash >= cost;
+    } else {
+        // we have enough shares to sell
+        valid = cs->shares - cs->reserved_shares + reclaimed_shares >= cost;
+    }
+    return valid;
+
 }
+
+u8 canrep_precheck(Order* in, ClientSettings* cs) {
+    if (in->quantity == 0)
+        return 0;
+
+    if (!is_market && in->price == 0)
+        return 0;
+
+    if (is_market && is_gtc)
+        return 0;
+
+    // here, we will enforce a valid cancellation
+    if (!cancel_precheck(in, orders, mbo))
+        return 0;
+
+    u32 reclaimed_cash = 0;
+    u32 reclaimed_shares = 0;
+    Order* cancel = (Order*)fl_get(orders, in->other_id);
+    if ((oc->status >> BUY_DIRECTION_BIT) & 1) 
+        reclaimed_cash += oc->quantity * oc->price;
+    else 
+        reclaimed_shares += oc->quantity;
+
+    return add_precheck(in, cs, reclaimed_cash, reclaimed_shares);
+}
+
 
 // much better
 // the big driver of all market book stuff
@@ -174,6 +287,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         ask_seed.client_id = in->client_id;
         ask_seed.price = in->second_price;
         ask_seed.quantity = in->second_quantity;
+        // this (and the bid coutnerpart) should be set to invalid if we dont find it, but allow to proceed
         ask_seed.other_id = in->second_id;
         // ask is a sell; keep the replace/cancel intent, drop the pair bit (this leg is a plain canrep)
         ask_seed.status = in->status & ~((1 << BUY_DIRECTION_BIT) | (1 << ASK_BID_PAIR_BIT));
@@ -193,6 +307,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
     if (is_pair) {
+        // if is_pair is set, we will explicitly ignore the is_market bit, because that is just a fucking headache
+
         // the two legs must be ordered (bid strictly below ask); a replacing leg needs a valid
         // cancel. a stale / nonexistent / not-ours cancel id fails cancel_precheck and rejects.
         u8 bid_cancel_ok = !is_can_rep || cancel_precheck(in, orders, (MBO*)old_mbo_raw);
@@ -218,19 +334,18 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         u32 bp = (cs->cash - cs->reserved_cash) + freed_cash;
         u32 sh = (cs->shares - cs->reserved_shares) + freed_shares;
         u8 bid_ok = in->quantity > 0 && in->price > 0
-                  && (u64)in->quantity * in->price <= bp;
+            && (u64)in->quantity * in->price <= bp;
         u8 ask_ok = in->second_quantity > 0 && in->second_price > 0
-                  && in->second_quantity <= sh;
+            && in->second_quantity <= sh;
         will_modify &= bid_ok & ask_ok;
-    } else if (is_can_rep){
-        will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
-        will_modify &= add_precheck(in, cs);
+    } else if (is_can_rep) {
+        will_modify = canrep_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CAN_REP_BIT);
     } else if (is_cancel) {
         will_modify = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
     } else {
-        will_modify = add_precheck(in, cs);
+        will_modify = add_precheck(in, cs, 0, 0);
     }
 
     // honestly if we truly have a method that can handle everything, we can send it here
@@ -415,6 +530,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         schedule_response(sc, maker, fstatus, q, fill->order_id, order->price);
 
     }
+
+    // gtc - leave whatever we have in the order
+    // fok - order should be fully filled, by above loop
+    // ioc - explicitly wipe it out here. kinda up to the client to know that ioc return + 0 quantity is exactly what they requested. or should we leave it, so that they know how much exactly was filled? yeah leave it
+    //if (is_ioc)
+        //taker->quantity = 0;
 
     if (!is_cancel) {
         // check exec_order_id to see if we had a partial fill
