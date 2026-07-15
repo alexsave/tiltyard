@@ -3,6 +3,31 @@
 
 #include "types.h"
 
+// why an order was rejected. treat unknown values as REJ_OTHER
+static const u8 REASON_NONE = 0;
+
+// malformed, never reached the book
+static const u8 REJ_INVALID_QUANTITY = 1;
+static const u8 REJ_INVALID_PRICE = 2;
+static const u8 REJ_BAD_QUALIFIER = 3; // bits that contradict each other
+static const u8 REJ_CROSSED_PAIR = 4; // pair's bid isn't below its ask
+
+// can't be funded
+static const u8 REJ_NO_BUYING_POWER = 5;
+static const u8 REJ_NO_SHARES = 6;
+
+// the cancel/replace target isn't usable
+static const u8 REJ_UNKNOWN_ORDER = 7; // not resting in the book
+static const u8 REJ_NOT_YOUR_ORDER = 8;
+static const u8 REJ_ORDER_ALREADY_DONE = 9; // already filled or rejected
+
+// accepted, then went away. a real venue calls these cancels, not rejects,
+// so they ride on REJECT_BIT until there's a CANCELLED_BIT (bit 14 is free)
+static const u8 CXL_IOC_UNFILLED = 10;
+static const u8 CXL_FOK_KILLED = 11;
+
+static const u8 REJ_OTHER = 99;
+
 typedef struct Response {
     // client id may actually be 23 bits, so maybe we put flags into the top bits
     u32 client_id;

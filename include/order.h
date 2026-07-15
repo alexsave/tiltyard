@@ -68,7 +68,6 @@ typedef struct Order {
     u16 second_quantity;
     u16 second_price;
     u32 second_id;
-    
 
 } Order;
 
