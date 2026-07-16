@@ -22,6 +22,9 @@ typedef struct ClientSettings {
     // 2 for .5 margin requirement, 4 for .25 margin requirement
     // keeping as an int not a float
     u8 margin_mult;
+    // maintenance %, house call. separate number from margin_mult, and per client:
+    // 25 is the reg floor, houses run 30-35 on whoever they trust less
+    u8 maint_pct;
     i64 cash; // negative = margin loan
     u32 reserved_cash; // bids in market
     //u32 buying_power;

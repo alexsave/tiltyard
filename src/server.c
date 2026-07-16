@@ -149,6 +149,21 @@ u64 client_bp(ClientSettings* cs, u16 mark, u32 reclaimed_cash, u32 reclaimed_sh
     return bp < 0 ? 0 : (u64)bp;
 }
 
+// equity under the client's maintenance %. driven by the mark moving, not by anything a
+// client sent, so it can't live in a precheck. multiplied out rather than divided
+u8 client_maint_call(ClientSettings* cs, u16 mark) {
+    if (cs->is_cash_account)
+        return 0;
+
+    i64 lmv = cs->shares > 0 ? (i64)mark * cs->shares : 0;
+    i64 smv = cs->shares < 0 ? (i64)mark * -cs->shares : 0;
+    i64 gmv = lmv + smv;
+    if (gmv == 0)
+        return 0;
+
+    return (cs->cash + lmv - smv) * 100 < gmv * cs->maint_pct;
+}
+
 // the usual stuff
 // 0 if the order can be worked, otherwise why it can't
 u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares){
@@ -764,6 +779,16 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if (last_trade_price != MAX_U32) {
         // what margin marks LMV/SMV against, so it has to move before any maintenance check
         sc->mark = last_trade_price;
+
+        // the mark moved, so anyone on margin could have just gone under.
+        // TODO: liquidate. synthesize a market order against the position (sell if long,
+        // buy to cover if short) into convert_holder, and let server_exec_to_sw feed it
+        // back into the sw queue - same path the stops will take. for now just say who
+        for (u32 ci = 0; ci < ho->num_clients; ci++) {
+            ClientSettings* mc = client_settings + ci;
+            if (client_maint_call(mc, sc->mark))
+                printf("MARGIN CALL client #%u [$%lld/%lldsh] mark $%u\n", ci, mc->cash, mc->shares, sc->mark);
+        }
 
         //if last_trade_price >= pq_peek(asks)
             // pop asks as market ordersinto the convert holder

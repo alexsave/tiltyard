@@ -260,7 +260,7 @@ int main(int argc, char* argv[]){
     for(u32 i = 0; i < ho->num_clients; i++) {
         u32 agro = i;
         ClientSettings* cs = sc->client_settings + agro;
-        printf("from client id #%u [$%u/$%u/%ush/%ush]\n", agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+        printf("from client id #%u [$%lld/$%u/%lldsh/%ush]\n", agro, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
     }
 
     mbo_dump(bs_get_no_ref(sc->mbo_bs, sc->last_mbo));
