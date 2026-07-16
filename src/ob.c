@@ -378,9 +378,9 @@ u8 cancels_hit(u64* cancels, u32 n, u32 order_id) {
 }
 
 // copy one level minus any entry whose id is in cancels[0..hits) (just this price's run).
-// returns the surviving order count - 0 means the whole level went away, so the caller writes
-// nothing and does not advance
-u16 mbo_prune_level(MBORunner* old, MBORunner* new, u64* cancels, u32 hits) {
+// only call when something survives (hits < order_count) - a fully cancelled level has no
+// index slot in the new book, so there is nothing here we could legally write
+void mbo_prune_level(MBORunner* old, MBORunner* new, u64* cancels, u32 hits) {
     MBOLevel* old_level = old->level;
 
     new->metadata->price = old->metadata->price;
@@ -400,7 +400,6 @@ u16 mbo_prune_level(MBORunner* old, MBORunner* new, u64* cancels, u32 hits) {
 
     new->metadata->quantity = kept_quantity;
     new->level->order_count = w;
-    return w;
 }
 
 // advance *c past any cancels priced below `price`, then return how many sit exactly at it.
@@ -456,9 +455,12 @@ u32 ob_expire(CB* cancels, u32 n, void* old_mbo_raw, void* new_mbo_raw) {
         if (hits == 0) {
             mbo_copy_level(old_runner, new_runner);
             mbo_jump(new_runner);
-        } else if (mbo_prune_level(old_runner, new_runner, sorted + c, hits) > 0) {
+        } else if (hits < old_runner->level->order_count) {
+            mbo_prune_level(old_runner, new_runner, sorted + c, hits);
             mbo_jump(new_runner);
         }
+        // else every order on the level was cancelled: write nothing at all - the new book
+        // has no index slot for it, so even a speculative metadata write would land on data
         c += hits;
         mbo_jump(old_runner);
     }
