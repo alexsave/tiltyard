@@ -19,10 +19,13 @@ typedef struct ClientSettings {
 
     u8 ws; 
     u8 is_cash_account;
-    u32 cash;
+    // 2 for .5 margin requirement, 4 for .25 margin requirement
+    // keeping as an int not a float
+    u8 margin_mult;
+    i64 cash; // negative = margin loan
     u32 reserved_cash; // bids in market
-    u32 buying_power;
-    u32 shares;
+    //u32 buying_power;
+    i64 shares; // negative = short
     u32 reserved_shares;
 
     u64 initial_wake;

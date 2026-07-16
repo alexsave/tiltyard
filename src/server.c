@@ -46,6 +46,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
 
 
+    sc->mark = 0; // no trade yet, so nothing to mark against until one prints
     sc->executing = 0;
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
@@ -124,12 +125,40 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     return in_book ? REASON_NONE : REJ_UNKNOWN_ORDER;
 }
 
+// reg t buying power = m * (equity - requirement), expanded so the /m cancels off:
+//   m*(cash + LMV - SMV) - m*(LMV + SMV)/m  ==  m*cash + (m-1)*LMV - (m+1)*SMV
+// cash carries no requirement so it's worth m. stock adds 1 but drags in 1/m, so m-1.
+// a short subtracts 1 and still drags in 1/m, so -(m+1).
+// signed until the floor: a margin loan makes m*cash negative, and in u32 that wraps to
+// something that passes every check. floored because negative excess means restricted,
+// which is not a margin call
+u64 client_bp(ClientSettings* cs, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares) {
+    i64 m = cs->margin_mult;
+    i64 lmv = cs->shares > 0 ? (i64)mark * cs->shares : 0;
+    i64 smv = cs->shares < 0 ? (i64)mark * -cs->shares : 0;
+
+    // an ask only commits BP where it runs past what we're long
+    i64 longs = cs->shares > 0 ? cs->shares : 0;
+    i64 asks = (i64)cs->reserved_shares - reclaimed_shares;
+    i64 naked = asks > longs ? asks - longs : 0;
+
+    i64 bp = m * cs->cash + (m - 1) * lmv - (m + 1) * smv
+        - ((i64)cs->reserved_cash - reclaimed_cash)
+        - (i64)mark * naked;
+
+    return bp < 0 ? 0 : (u64)bp;
+}
+
 // the usual stuff
 // 0 if the order can be worked, otherwise why it can't
-u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32 reclaimed_shares){
+u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares){
 
     // 0 - reclaim from cancelled order
     // 1 - figure out full fill "cost"
+
+    // nothing has printed yet, so mark against what this order is willing to pay
+    if (mark == 0)
+        mark = in->price;
 
     u8 direction = (in->status >> BUY_DIRECTION_BIT) & 1;
     u8 is_market = (in->status >> IS_MARKET_BIT) & 1;
@@ -154,6 +183,19 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32
     // abstract sense of how much it costs to fill the order, either cash or shares
     u32 cost = 0;
 
+    // on margin, the shares that just close what we already have are exempt from the BP
+    // gate - a close reduces risk, and a broker always lets you out. everything past the
+    // close is opening exposure and gets charged at what it actually fills at. attributed
+    // chunk by chunk down the walk, so no total ever has to be divided back out
+    u32 close_q = 0;
+    if (!cs->is_cash_account) {
+        if (direction == 1 && cs->shares < 0)
+            close_q = (u32)(-cs->shares); // buying back a short
+        else if (direction == 0 && cs->shares > (i64)cs->reserved_shares)
+            close_q = (u32)(cs->shares - cs->reserved_shares); // selling longs we aren't already quoting
+    }
+    u32 open_notional = 0;
+
     // walk the same levels ob will, so what we charge is what actually fills
     u16 lo_ask_index = mbo->hi_bid_index == MAX_U16 ? 0 : mbo->hi_bid_index + 1;
 
@@ -166,9 +208,18 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32
             if (q_remain < mboi->quantity) {
                 cost += q_remain * mboi->price;
 
+                u32 closing = q_remain < close_q ? q_remain : close_q;
+                close_q -= closing;
+                open_notional += (q_remain - closing) * mboi->price;
+
                 q_remain -= q_remain;
             } else if (q_remain >= mboi->quantity) {
                 cost += mboi->quantity * mboi->price;
+
+                u32 closing = mboi->quantity < close_q ? mboi->quantity : close_q;
+                close_q -= closing;
+                open_notional += (mboi->quantity - closing) * mboi->price;
+
                 q_remain -= mboi->quantity;
             }
         }
@@ -183,9 +234,18 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32
             if (q_remain < mboi->quantity) {
                 cost += q_remain;
 
+                u32 closing = q_remain < close_q ? q_remain : close_q;
+                close_q -= closing;
+                open_notional += (q_remain - closing) * mboi->price;
+
                 q_remain -= q_remain;
             } else if (q_remain >= mboi->quantity) {
                 cost += mboi->quantity;
+
+                u32 closing = mboi->quantity < close_q ? mboi->quantity : close_q;
+                close_q -= closing;
+                open_notional += (mboi->quantity - closing) * mboi->price;
+
                 q_remain -= mboi->quantity;
             }
         }
@@ -216,12 +276,20 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32
         // add the resting cost
         if (direction == 1)
             cost += q_remain * in->price;
-        else 
+        else
             cost += q_remain;
+
+        u32 closing = q_remain < close_q ? q_remain : close_q;
+        close_q -= closing;
+        open_notional += (q_remain - closing) * in->price;
     }
     // for ioc, we just ignore the remaining quantity
 
-    if (direction == 1) {
+    if (!cs->is_cash_account) {
+        // reg t IS the gate, there is no second equity check. equity's job is maintenance
+        if (client_bp(cs, mark, reclaimed_cash, reclaimed_shares) < open_notional)
+            return direction == 1 ? REJ_NO_BUYING_POWER : REJ_NO_SHARES;
+    } else if (direction == 1) {
         // we have enough cash to buy
         if (cs->cash - cs->reserved_cash + reclaimed_cash < cost)
             return REJ_NO_BUYING_POWER;
@@ -234,7 +302,7 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u32 reclaimed_cash, u32
 
 }
 
-u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo) {
+u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark) {
     // here, we will enforce a valid cancellation
     u8 cancel_reason = cancel_precheck(in, orders, mbo);
     if (cancel_reason)
@@ -248,7 +316,7 @@ u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo) {
     else
         reclaimed_shares += cancel->quantity;
 
-    return add_precheck(in, cs, mbo, reclaimed_cash, reclaimed_shares);
+    return add_precheck(in, cs, mbo, mark, reclaimed_cash, reclaimed_shares);
 }
 
 // 0 if both legs can be worked, otherwise why they can't. the bid is in the primary
@@ -396,13 +464,13 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if (is_pair) {
         rej_reason = pair_precheck(in, ask_in, cs, orders, (MBO*)old_mbo_raw);
     } else if (is_can_rep) {
-        rej_reason = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw);
+        rej_reason = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
         status |= (1 << CAN_REP_BIT);
     } else if (is_cancel) {
         rej_reason = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
     } else {
-        rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, 0, 0);
+        rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0);
     }
 
     // honestly if we truly have a method that can handle everything, we can send it here
@@ -452,7 +520,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     }
 
     printf("[%llus] order #%u ", now_ns/S_TO_NS, exec_order_id);
-    printf("client #%u [$%u/$%u/%uq/%uq] ", in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
+    printf("client #%u [$%lld/$%u/%lldq/%uq] ", in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
     if (is_cancel) {
         printf("cancel order #%u ", in->other_id);
     } else {
@@ -694,6 +762,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // i think this is the easy part
     // check last price (
     if (last_trade_price != MAX_U32) {
+        // what margin marks LMV/SMV against, so it has to move before any maintenance check
+        sc->mark = last_trade_price;
+
         //if last_trade_price >= pq_peek(asks)
             // pop asks as market ordersinto the convert holder
         //if last_trade_price <= pq_peek(bids)

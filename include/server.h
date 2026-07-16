@@ -22,6 +22,7 @@ typedef struct ServerContext {
     u32* client_allocations;
 
     u32 last_mbo;
+    u16 mark; // last trade price, what margin marks LMV/SMV against
     ClientSettings* client_settings;
     BS* mbo_bs;
     u8 executing;

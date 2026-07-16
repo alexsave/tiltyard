@@ -69,6 +69,7 @@ typedef struct Order {
 
     // in the case that askbid pair is enabled, this will be the ask, and the above will be the bid
     // if has stop bit is enabled, then this is the stop details
+    u8 second_direction;
     u16 second_quantity;
     u16 second_price;
     u32 second_id;
