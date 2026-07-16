@@ -15,6 +15,11 @@ typedef struct MBP {
     // after this is the actual order data
 } MBP;
 
+// how many bytes the mbp derived from this mbo needs (for the bs reservation)
+u32 mbp_derive_size(void* mbo_raw);
+// squash an mbo into its price-aggregated mbp
+void mbp_derive(void* mbp_raw, void* mbo_raw);
+
 
 #endif
 
