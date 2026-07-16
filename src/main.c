@@ -112,7 +112,7 @@ int main(int argc, char* argv[]){
 
             u32 client_id = response.client_id;
             u32 snapshot_id = response.snapshot_id;
-            u16 status = response.status;
+            u32 status = response.status;
 
             Order tmp = {};
             u32 new_order_id = fl_insert(orders, &tmp);

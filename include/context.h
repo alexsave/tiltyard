@@ -14,7 +14,7 @@ typedef struct Context {
     //Order* response_order_ptr;
     u32 quantity_filled; //quantity of that order
     u16 price; //price of that order
-    u16 status; // status of ^THIS order
+    u32 status; // status of ^THIS order
 
     // the ask leg of an atomic pair, delivered alongside the bid in the same wake-up
     // only meaningful when the pair bit is set in status
