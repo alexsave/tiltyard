@@ -34,6 +34,9 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // time in force. neither set is GTC - rest whatever didn't fill, exactly what a plain limit always did
 // a market order has no price to rest at, so it must carry one of these
 // set by the server on a ping/ws ack: nothing rests, so the client's slot is freed
+// day rests only for this session, gtd until its date (day index carried in second_id)
+static const u8 GTD_BIT = 18;
+static const u8 DAY_BIT = 17;
 static const u8 ICEBERG_BIT = 16;
 static const u8 CONTROL_BIT = 15;
 static const u8 STOP_LIMIT_BIT = 14;// the stop order is a limit stop

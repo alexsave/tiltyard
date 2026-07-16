@@ -26,6 +26,11 @@ static const u8 REJ_ORDER_ALREADY_DONE = 9; // already filled or rejected
 // so that bit has to come from somewhere
 static const u8 CXL_IOC_UNFILLED = 10;
 static const u8 CXL_FOK_KILLED = 11;
+// a resting day/gtd order pulled at the close, same "cancel on the reject bit" convention
+static const u8 CXL_SESSION_CLOSE = 12;
+
+// arrived while the market was closed, never reached the book
+static const u8 REJ_MARKET_CLOSED = 13;
 
 static const u8 REJ_OTHER = 99;
 
