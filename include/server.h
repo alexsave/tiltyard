@@ -26,6 +26,7 @@ typedef struct ServerContext {
     ClientSettings* client_settings;
     BS* mbo_bs;
     u8 executing;
+    u8 is_open; // the market: orders off the sw queue are rejected while this is 0
     CB* sw_queue;
     CB* hw_queue;
     FL* orders;
@@ -35,6 +36,15 @@ typedef struct ServerContext {
     FL* responses;
     FL* icebergs;
     CB* convert_holder;
+
+    // time in force: day orders queued as they rest, gtd orders in a date-keyed heap. at a
+    // close the fired ones move into price_pq, which drains (sorted) into expire_cb so the
+    // book can be pruned in one snapshot. expire_cb is always filled from empty, so its buffer
+    // is read directly as a flat sorted array
+    CB* day_orders;
+    PQ* gtd;
+    PQ* price_pq;
+    CB* expire_cb;
 
     u64* rand;
 
@@ -49,6 +59,8 @@ typedef struct ServerContext {
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed);
 
 void server_arrival(ServerContext* sc, u32 order_id);
+void server_market_open(ServerContext* sc);
+void server_market_close(ServerContext* sc);
 void server_hw_to_sw(ServerContext* sc);
 void server_exec_end(ServerContext* sc);
 void server_exec_start(ServerContext* sc);

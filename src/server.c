@@ -49,6 +49,11 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
     sc->mark = 0; // no trade yet, so nothing to mark against until one prints
     sc->executing = 0;
+    sc->is_open = 0; // closed until the first open event rings the bell
+    sc->day_orders = cb_init(sizeof(u32)); // drained every close, so ids alone suffice
+    sc->gtd = pq_init(); // (date << 32 | id), lives across closes
+    sc->price_pq = pq_init();
+    sc->expire_cb = cb_init(sizeof(u64));
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
@@ -532,7 +537,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     u32 fillable = 0; // how much an add crosses on arrival; the iceberg create sizes off it
 
-    if (is_pair) {
+    if (!sc->is_open) {
+        rej_reason = REJ_MARKET_CLOSED;
+    } else if (is_pair) {
         rej_reason = pair_precheck(in, ask_in, cs, orders, (MBO*)old_mbo_raw);
     } else if (is_can_rep) {
         rej_reason = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
@@ -809,6 +816,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             cs->reserved_shares += reserve_q;
     }
 
+    // whatever just rested gets remembered so its time in force can pull it later: day at
+    // this session's close, gtd once its date (carried in second_id) comes up
+    if (in->quantity > 0 && !is_cancel && !is_can_rep && !is_pair && !is_iceberg_replenish) {
+        if ((in->status >> DAY_BIT) & 1)
+            cb_queue(sc->day_orders, &exec_order_id);
+        else if ((in->status >> GTD_BIT) & 1)
+            pq_push(sc->gtd, ((u64)in->second_id << 32) | exec_order_id);
+    }
+
     // the pair's bid reserve is handled above (is_buy); add the ask leg's share reserve.
     // a pure cancel pair added no ask, so there is nothing to reserve for
     if (is_pair && !is_cancel)
@@ -863,22 +879,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // might as well create a new MBP here. all we need is the new mbo
 
-    MBO* new_mbo = (MBO*)new_mbo_raw;
-    
-    u32 mbp_size = sizeof(MBP) + (new_mbo->level_count) * sizeof(MBPIndex);
-    // move to mbp.c?
     void* new_mbp_raw;
-    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_size, 1, &new_mbp_raw);
+    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
+    mbp_derive(new_mbp_raw, new_mbo_raw);
 
-    MBP* new_mbp = (MBP*)new_mbp_raw;
-    new_mbp->level_count = new_mbo->level_count;
-    new_mbp->hi_bid_index = new_mbo->hi_bid_index;
-
-    for (u16 i = 0; i < new_mbo->level_count; i++) {
-        (new_mbp->levels + i)->price = (new_mbo->levels + i)->price;
-        (new_mbp->levels + i)->quantity = (new_mbo->levels + i)->quantity;
-    }
-    
     bs_get(sc->mbp_bs, sc->last_mbp);
     sc->last_mbp = next_last_mbp;
 
@@ -935,6 +939,121 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         client_settings[ci].will_notify = 0;
     }
 } 
+
+// a resting order whose time in force just ran out: give back its reserve, tell the client,
+// and queue it (keyed by price) for the batch book prune. guarded against stale ids - the
+// slot must still hold a live order carrying tif_bit, and a gtd order must also match the
+// date its heap entry fired under (second_id carries it), else the id was recycled
+void collect_expire(ServerContext* sc, u32 order_id, u8 tif_bit, u32 date) {
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+
+    if (o->quantity == 0 || ((o->status >> REJECT_BIT) & 1) || !((o->status >> tif_bit) & 1))
+        return;
+
+    if (tif_bit == GTD_BIT && o->second_id != date)
+        return;
+
+    ClientSettings* cs = sc->client_settings + o->client_id;
+    u8 is_buy = (o->status >> BUY_DIRECTION_BIT) & 1;
+    if (is_buy)
+        cs->reserved_cash -= o->quantity * o->price;
+    else
+        cs->reserved_shares -= o->quantity;
+
+    // an expiring iceberg tip drags its hidden half back too, then frees the struct
+    if ((o->status >> ICEBERG_BIT) & 1) {
+        Iceberg* ice = (Iceberg*)fl_get(sc->icebergs, o->second_id);
+        if (is_buy)
+            cs->reserved_cash -= (u32)(ice->remaining * ice->price);
+        else
+            cs->reserved_shares -= (u32)ice->remaining;
+        fl_release(sc->icebergs, o->second_id);
+    }
+
+    pq_push(sc->price_pq, ((u64)o->price << 32) | order_id);
+
+    // rides on the reject bit until there's a cancelled bit, same as an ioc/fok pull
+    schedule_response(sc, o->client_id, (1 << REJECT_BIT) | (1 << CANCEL_BIT), 0, order_id, o->price, CXL_SESSION_CLOSE);
+
+    o->status |= (1 << REJECT_BIT);
+    o->quantity = 0;
+}
+
+// one new snapshot with every collected expiry spliced out of the book
+void server_prune_book(ServerContext* sc) {
+    // heap pops come out ascending, and expire_cb starts empty, so its buffer ends up a
+    // flat sorted array
+    u32 n = sc->price_pq->current - 1;
+    for (u32 i = 0; i < n; i++) {
+        u64 key = pq_pop(sc->price_pq);
+        cb_queue(sc->expire_cb, &key);
+    }
+
+    BS* mbo_bs = sc->mbo_bs;
+    u32 prev_last_mbo = sc->last_mbo;
+
+    // pruning only removes, so the old byte size is a safe ceiling
+    u32 old_size = mbo_bs->metadata[prev_last_mbo].size;
+    void* new_mbo_raw;
+    u32 next_last_mbo = bs_reserve(mbo_bs, old_size, 1, &new_mbo_raw);
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, prev_last_mbo);
+
+    u32 new_size = ob_expire(sc->expire_cb, n, old_mbo_raw, new_mbo_raw);
+
+    sc->last_mbo = next_last_mbo;
+    bs_resize(mbo_bs, new_size);
+
+    // leave expire_cb empty for the next close
+    for (u32 i = 0; i < n; i++)
+        cb_deque(sc->expire_cb);
+
+    void* new_mbp_raw;
+    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
+    mbp_derive(new_mbp_raw, new_mbo_raw);
+
+    bs_get(sc->mbp_bs, sc->last_mbp);
+    sc->last_mbp = next_last_mbp;
+
+    bs_get(mbo_bs, prev_last_mbo);
+}
+
+void server_market_open(ServerContext* sc) {
+    sc->is_open = 1;
+    printf("[%llus] MARKET OPEN\n", sch_now_ns(sc->sch)/S_TO_NS);
+
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CLOSE), OPEN_TO_CLOSE_NS);
+}
+
+void server_market_close(ServerContext* sc) {
+    sc->is_open = 0;
+    printf("[%llus] MARKET CLOSE\n", sch_now_ns(sc->sch)/S_TO_NS);
+
+    // day orders last exactly one session
+    while (!cb_is_empty(sc->day_orders)) {
+        u32 order_id = *(u32*)cb_deque(sc->day_orders);
+        collect_expire(sc, order_id, DAY_BIT, 0);
+    }
+
+    // gtd orders fire once their date is here. the heap is date-keyed, so stop at the
+    // first one still in the future
+    u32 today = sch_now_ns(sc->sch) / DAY_TO_NS;
+    while (!pq_is_empty(sc->gtd)) {
+        if ((pq_peek(sc->gtd) >> 32) > today)
+            break;
+
+        u64 entry = pq_pop(sc->gtd);
+        collect_expire(sc, (u32)(entry & MAX_U32), GTD_BIT, (u32)(entry >> 32));
+    }
+
+    if (!pq_is_empty(sc->price_pq))
+        server_prune_book(sc);
+
+    // fridays jump the weekend too
+    u64 gap = CLOSE_TO_OPEN_NS;
+    if (today % 7 == FRIDAY_MOD)
+        gap += WEEKEND_NS;
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_OPEN), gap);
+}
 
 void server_exec_end(ServerContext* sc) {
     SCH* sch = sc->sch;
@@ -1061,6 +1180,10 @@ void server_free(ServerContext* sc) {
     cb_free(sc->sw_queue);
     cb_free(sc->hw_queue);
     cb_free(sc->convert_holder);
+    cb_free(sc->day_orders);
+    cb_free(sc->expire_cb);
+    pq_free(sc->gtd);
+    pq_free(sc->price_pq);
 
     free(sc->rand);
 

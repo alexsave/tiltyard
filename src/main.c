@@ -49,6 +49,10 @@ int main(int argc, char* argv[]){
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
 
+    // first bell. open and close reschedule each other from there
+    u64 open_event = build_event(CONTROL_TYPE, CONTROL_PARAM_OPEN);
+    sch_schedule(sch, open_event, FIRST_OPEN_NS);
+
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;
     for(u32 i = 0; i < ho->num_clients; i++) {
@@ -234,6 +238,10 @@ int main(int argc, char* argv[]){
             } else if (control_id == CONTROL_PARAM_EOM) {
                 // charge clients subscription costs
 
+            } else if (control_id == CONTROL_PARAM_OPEN) {
+                server_market_open(sc);
+            } else if (control_id == CONTROL_PARAM_CLOSE) {
+                server_market_close(sc);
             } else if (control_id == CONTROL_PARAM_NEWS) {
                 // randomly set context to some value, and do not change it until next
 
