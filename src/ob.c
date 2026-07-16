@@ -359,6 +359,116 @@ u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_
     return ((void*)(new_runner->level)) - new_mbo_raw;
 }
 
+// is order_id among cancels[0..n)? their low 32 bits are ids, ascending within one price
+// (the heap breaks price ties by id), so a binary search does it
+u8 cancels_hit(u64* cancels, u32 n, u32 order_id) {
+    u32 lo = 0;
+    u32 hi = n;
+    while (lo < hi) {
+        u32 mid = (lo + hi) >> 1;
+        u32 mid_id = (u32)(cancels[mid] & MAX_U32);
+        if (mid_id == order_id)
+            return 1;
+        if (mid_id < order_id)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return 0;
+}
+
+// copy one level minus any entry whose id is in cancels[0..hits) (just this price's run).
+// returns the surviving order count - 0 means the whole level went away, so the caller writes
+// nothing and does not advance
+u16 mbo_prune_level(MBORunner* old, MBORunner* new, u64* cancels, u32 hits) {
+    MBOLevel* old_level = old->level;
+
+    new->metadata->price = old->metadata->price;
+    new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
+
+    u32 kept_quantity = 0;
+    u16 w = 0;
+    for (u16 i = 0; i < old_level->order_count; i++) {
+        MBOEntry* e = old_level->entries + i;
+        if (cancels_hit(cancels, hits, e->order_id))
+            continue;
+        new->level->entries[w].order_id = e->order_id;
+        new->level->entries[w].quantity = e->quantity;
+        kept_quantity += e->quantity;
+        w++;
+    }
+
+    new->metadata->quantity = kept_quantity;
+    new->level->order_count = w;
+    return w;
+}
+
+// advance *c past any cancels priced below `price`, then return how many sit exactly at it.
+// the book and the sorted array both climb in price, so one shared cursor walks both
+u32 level_hits(u64* sorted, u32 n, u32* c, u16 price) {
+    while (*c < n && (u16)(sorted[*c] >> 32) < price)
+        (*c)++;
+    u32 hits = 0;
+    while (*c + hits < n && (u16)(sorted[*c + hits] >> 32) == price)
+        hits++;
+    return hits;
+}
+
+// prune a whole batch of resting orders in one new snapshot. walks the book low price to high
+// alongside the sorted cancels, dropping the cancelled entries off each level and any level
+// that empties out. see ob.h for the buffer's layout
+u32 ob_expire(CB* cancels, u32 n, void* old_mbo_raw, void* new_mbo_raw) {
+    MBO* old_mbo = (MBO*)old_mbo_raw;
+    MBO* new_mbo = (MBO*)new_mbo_raw;
+
+    // filled from empty, so the entries sit flat at [0, n)
+    u64* sorted = (u64*)cancels->buffer;
+    u16 old_hi_bid = old_mbo->hi_bid_index;
+
+    // pass one: how many levels survive, and how many survivors are bids. we need the new
+    // level_count before mbor_init, because that is what fixes where the level data starts
+    u16 new_level_count = 0;
+    u16 new_bid_levels = 0;
+    u32 c = 0;
+    for (u16 i = 0; i < old_mbo->level_count; i++) {
+        MBOIndex* lvl = old_mbo->levels + i;
+        u32 hits = level_hits(sorted, n, &c, lvl->price);
+
+        MBOLevel* data = (MBOLevel*)(mbo_data_start(old_mbo) + lvl->byte_offset);
+        if (hits < data->order_count) {
+            new_level_count++;
+            if (old_hi_bid != MAX_U16 && i <= old_hi_bid)
+                new_bid_levels++;
+        }
+        c += hits;
+    }
+
+    new_mbo->level_count = new_level_count;
+    new_mbo->hi_bid_index = new_bid_levels ? new_bid_levels - 1 : MAX_U16;
+
+    // pass two: build it, now that data_start is fixed
+    MBORunner* old_runner = mbor_init(old_mbo);
+    MBORunner* new_runner = mbor_init(new_mbo);
+    c = 0;
+    for (u16 i = 0; i < old_mbo->level_count; i++) {
+        u32 hits = level_hits(sorted, n, &c, old_runner->metadata->price);
+
+        if (hits == 0) {
+            mbo_copy_level(old_runner, new_runner);
+            mbo_jump(new_runner);
+        } else if (mbo_prune_level(old_runner, new_runner, sorted + c, hits) > 0) {
+            mbo_jump(new_runner);
+        }
+        c += hits;
+        mbo_jump(old_runner);
+    }
+
+    u32 new_size = ((void*)(new_runner->level)) - new_mbo_raw;
+    free(old_runner);
+    free(new_runner);
+    return new_size;
+}
+
 // figure out which old-mbo levels a single side (bid OR ask) touches, and how
 // lui/hui are the untouched indicies bracketing the affected range, op_type says what to do
 // remaining_out gets the leftover quantity after any fills, modified_level the level FILL_SOME bit into

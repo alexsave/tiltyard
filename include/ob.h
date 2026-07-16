@@ -63,6 +63,10 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
 u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 // now returns actual size instead of the new handle. bs is handled by server
 u32 ob_cancel(Order* to_cancel, u32 cancel_id, void* old_mbo_raw, void* new_mbo_raw);
+// wipe a whole batch of resting orders in one new snapshot. cancels->buffer holds n entries
+// sorted ascending by (price << 32 | order_id): price major so each level is a contiguous run,
+// id minor so the run is binary-searchable. filled from empty, so the buffer reads flat
+u32 ob_expire(CB* cancels, u32 n, void* old_mbo_raw, void* new_mbo_raw);
 u32 ob_execute(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills);
 u32 ob_queue_position(u16 price, u32 order_id, void* mbo_raw);
 void mbo_dump(void* mbo_raw);
