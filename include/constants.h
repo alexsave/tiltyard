@@ -48,7 +48,19 @@ static const u32 CONTROL_PARAM_EOM = MAX_PARAM - 1;
 static const u32 CONTROL_PARAM_EOD = MAX_PARAM - 2;
 static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 3;
 static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 4;
-static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_NEWS;
+static const u32 CONTROL_PARAM_OPEN = MAX_PARAM - 5;
+static const u32 CONTROL_PARAM_CLOSE = MAX_PARAM - 6;
+static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CLOSE;
+
+// 9:30 to 4pm eastern with no dst, so 14:30 to 21:00 utc. t=0 is midnight utc 1/1/1970,
+// which makes the first bell 14.5h in. a session runs 6.5h, the overnight gap 17.5h
+static const u64 FIRST_OPEN_NS = 14 * H_TO_NS + 30 * MIN_TO_NS;
+static const u64 OPEN_TO_CLOSE_NS = 6 * H_TO_NS + 30 * MIN_TO_NS;
+static const u64 CLOSE_TO_OPEN_NS = 17 * H_TO_NS + 30 * MIN_TO_NS;
+
+// 1/1/1970 is a thursday, so day % 7 == 1 is a friday - that close also jumps the weekend
+static const u64 FRIDAY_MOD = 1;
+static const u64 WEEKEND_NS = 2 * DAY_TO_NS;
 
 
 static const u32 MAX_U32 = 4294967295;
