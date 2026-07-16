@@ -2,6 +2,7 @@
 #define SERVER_H
 
 #include "types.h"
+#include "constants.h"
 #include "client_settings.h"
 #include "bs.h"
 #include "fl.h"
@@ -9,9 +10,8 @@
 #include "sch.h"
 #include "holder.h"
 
-// this only works because HW_TO_SW_ID = 0 and is reserved
-// come back to this lol
-static const u32 CONVERT_SENTINEL_VALUE = 0;
+// order ids live well below MAX_U32 (see MIN_RESERVED_PACKET), so no real slice collides
+static const u32 CONVERT_SENTINEL_VALUE = MAX_U32;
 
 // basically everything we were holding as locals in src/main
 // bundled into a struct
