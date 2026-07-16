@@ -34,6 +34,7 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // time in force. neither set is GTC - rest whatever didn't fill, exactly what a plain limit always did
 // a market order has no price to rest at, so it must carry one of these
 // set by the server on a ping/ws ack: nothing rests, so the client's slot is freed
+static const u8 ICEBERG_BIT = 16;
 static const u8 CONTROL_BIT = 15;
 static const u8 STOP_LIMIT_BIT = 14;// the stop order is a limit stop
 static const u8 FOK_BIT = 13; // all of it right now, or none of it
@@ -55,7 +56,7 @@ static const u8 REJECT_BIT = 0;
 
 // also includes websocket connections, but here we go
 typedef struct Order {
-    u16 status;
+    u32 status;
     u32 client_id;
 
     u16 quantity; // up to 65K stocks at a time, update if we have whales
