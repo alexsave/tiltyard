@@ -17,6 +17,7 @@
 #include "ob.h"
 #include "rand.h"
 #include "fill.h"
+#include "iceberg.h"
 
 #include "mbp.h"
 
@@ -55,6 +56,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
     sc->fills = cb_init(sizeof(Fill));
     sc->responses = fl_init(sizeof(Response), MAX_U32);
+    sc->icebergs = fl_init(sizeof(Iceberg), MAX_U32);
 
     sc->rand = rand_init(seed);
     rand_next(sc->rand);
@@ -63,7 +65,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     return sc;
 }
 
-void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantity_filled, u32 order_id, u16 price, u8 rej_reason) {
+void schedule_response(ServerContext* sc, u32 client_id, u32 status, u32 quantity_filled, u32 order_id, u16 price, u8 rej_reason) {
     // this assumes that all client are mbo subscribers
     bs_bump_refs(sc->mbo_bs, sc->last_mbo);
     Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled, .price = price, .rej_reason = rej_reason};
@@ -75,7 +77,7 @@ void schedule_response(ServerContext* sc, u32 client_id, u16 status, u32 quantit
 }
 
 // same as schedule_response, but carries both legs of an atomic pair in one delivery
-void schedule_pair_response(ServerContext* sc, u32 client_id, u16 status, u32 order_id, u16 price, u32 quantity_filled, u32 second_order_id, u16 second_price, u32 second_quantity_filled, u8 rej_reason) {
+void schedule_pair_response(ServerContext* sc, u32 client_id, u32 status, u32 order_id, u16 price, u32 quantity_filled, u32 second_order_id, u16 second_price, u32 second_quantity_filled, u8 rej_reason) {
     bs_bump_refs(sc->mbo_bs, sc->last_mbo);
     Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .price = price, .quantity_filled = quantity_filled, .second_order_id = second_order_id, .second_price = second_price, .second_quantity_filled = second_quantity_filled, .rej_reason = rej_reason};
     u32 response_id = fl_insert(sc->responses, &r);
@@ -123,6 +125,36 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     }
 
     return in_book ? REASON_NONE : REJ_UNKNOWN_ORDER;
+}
+
+// a visible iceberg slice just emptied - show the next one. returns the minted order id
+// (for the fill response's second_order_id) or MAX_U32 when the iceberg is spent and freed.
+// caller beware: fl_insert here can move the orders pool, so refetch order pointers after.
+u32 iceberg_replenish(ServerContext* sc, u32 ice_id, u8 is_buy) {
+    Iceberg* ice = (Iceberg*)fl_get(sc->icebergs, ice_id);
+
+    if (ice->remaining == 0) {
+        fl_release(sc->icebergs, ice_id);
+        return MAX_U32;
+    }
+
+    // the last slice can be short
+    u16 next = ice->chunk;
+    if (ice->remaining < ice->chunk)
+        next = (u16)ice->remaining;
+    ice->remaining -= next;
+
+    Order synth = {};
+    synth.client_id = ice->client_id;
+    synth.price = ice->price;
+    synth.quantity = next;
+    synth.status = (1 << ICEBERG_BIT) | (is_buy ? (1 << BUY_DIRECTION_BIT) : 0);
+    synth.second_id = ice_id; // same iceberg, next slice
+    u32 synth_id = fl_insert(sc->orders, &synth);
+    cb_queue(sc->convert_holder, &synth_id);
+
+    printf("ICEBERG slice #%u q %u @ $%u, %llu hidden\n", synth_id, next, ice->price, ice->remaining);
+    return synth_id;
 }
 
 // reg t buying power = m * (equity - requirement), expanded so the /m cancels off:
@@ -192,6 +224,16 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
     // a market order has no price to rest at, so it must be told to drop what it cant fill
     if (is_market && is_gtc)
         return REJ_BAD_QUALIFIER;
+
+    // an iceberg has to rest to hide, so a market or ioc/fok one is a contradiction.
+    // second_quantity is the total; it has to cover the visible chunk (in->quantity)
+    u8 is_iceberg = (in->status >> ICEBERG_BIT) & 1;
+    if (is_iceberg) {
+        if (is_market || !is_gtc)
+            return REJ_BAD_QUALIFIER;
+        if (in->second_quantity < in->quantity)
+            return REJ_INVALID_QUANTITY;
+    }
 
     u32 q_remain = in->quantity;
 
@@ -299,6 +341,20 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
         open_notional += (q_remain - closing) * in->price;
     }
     // for ioc, we just ignore the remaining quantity
+
+    // the hidden half rests at the same price - fund the whole iceberg up front, same
+    // close attribution as any other resting quantity
+    if (is_iceberg) {
+        u32 hidden = in->second_quantity - in->quantity;
+        if (direction == 1)
+            cost += hidden * in->price;
+        else
+            cost += hidden;
+
+        u32 closing = hidden < close_q ? hidden : close_q;
+        close_q -= closing;
+        open_notional += (hidden - closing) * in->price;
+    }
 
     if (!cs->is_cash_account) {
         // reg t IS the gate, there is no second equity check. equity's job is maintenance
@@ -420,7 +476,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     ClientSettings* cs = (client_settings + in->client_id);
 
-    u16 status = 0;
+    u32 status = 0;
     u8 rej_reason = 0;
 
     // for now we'll just handle socket connections
@@ -461,6 +517,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;   // for a pair, this is the bid leg
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
     u8 ask_is_cr = is_pair ? ((ask_in->status >> CAN_REP_BIT) & 1) : 0;
+    // create leaves second_id at MAX_U32; a minted slice carries its iceberg id
+    u8 is_iceberg = (in->status >> ICEBERG_BIT) & 1;
+    u8 is_iceberg_replenish = is_iceberg && in->second_id != MAX_U32;
     // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
     u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
 
@@ -484,6 +543,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     } else if (is_cancel) {
         rej_reason = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
+    } else if (is_iceberg_replenish) {
+        // a minted slice is already funded and reserved from create time; it just rests
     } else {
         rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0);
     }
@@ -532,6 +593,17 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             schedule_response(sc, in->client_id, status, 0, exec_order_id, 0, rej_reason);
         }
         return;
+    }
+
+    // a fresh iceberg: stash the hidden half in its own freelist (fl_insert copies it in)
+    // and stamp the visible slice with the id so every fill finds its way back. chunk is
+    // frozen now, before a cross-fill can shrink in->quantity
+    if (is_iceberg) {
+        status |= (1 << ICEBERG_BIT);
+        if (!is_iceberg_replenish) {
+            Iceberg ice = { .client_id = in->client_id, .remaining = in->second_quantity - in->quantity, .price = in->price, .chunk = in->quantity };
+            in->second_id = fl_insert(sc->icebergs, &ice);
+        }
     }
 
     printf("[%llus] order #%u ", now_ns/S_TO_NS, exec_order_id);
@@ -585,6 +657,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // a pair crosses the book on at most one leg (bid<ask forbids both), so whatever fills
     // ob_pair queued belong to that one taker. find it by the same best-bid/ask test ob uses.
     Order* taker = in;
+    // so we can refetch taker if fl_insert moves the pool under us (iceberg replenish)
+    u32 taker_id = exec_order_id;
     u8 taker_is_buy = is_buy;
     if (is_pair) {
         MBO* om = (MBO*)old_mbo_raw;
@@ -593,7 +667,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         if (lo_ask < om->level_count && in->price >= om->levels[lo_ask].price) {
             taker = in; taker_is_buy = 1;            // bid lifts asks
         } else if (hbi != MAX_U16 && ask_in->price <= om->levels[hbi].price) {
-            taker = ask_in; taker_is_buy = 0;        // ask hits bids
+            taker = ask_in;                          // ask hits bids
+            taker_id = ask_order_id;
+            taker_is_buy = 0;
         }
     }
     //printf("new size %u\n", new_size);
@@ -665,16 +741,31 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             mcs->reserved_cash -= cost;
         }
 
-        u16 fstatus = 1 << FILL_BIT;
+        u32 fstatus = 1 << FILL_BIT;
         if (fill->partial) {
             fstatus |= 1 << PARTIAL_FILL_BIT;
         }
 
-
-        //printf("scheduling response %u\n", fill->order_id);
-        schedule_response(sc, maker, fstatus, q, fill->order_id, order->price, REASON_NONE);
+        // a resting iceberg slice that just emptied replenishes here. read what we need off
+        // order first, because iceberg_replenish's fl_insert can move the pool out from under it
+        if (((order->status >> ICEBERG_BIT) & 1) && order->quantity == 0) {
+            u16 fill_price = order->price;
+            u8 maker_is_buy = (order->status >> BUY_DIRECTION_BIT) & 1;
+            u32 slice_id = iceberg_replenish(sc, order->second_id, maker_is_buy);
+            taker = (Order*)fl_get(orders, taker_id);
+            // second_order_id carries the next slice's id (MAX_U32 if the iceberg is spent)
+            schedule_pair_response(sc, maker, fstatus | (1 << ICEBERG_BIT), fill->order_id, fill_price, q, slice_id, 0, 0, REASON_NONE);
+        } else {
+            //printf("scheduling response %u\n", fill->order_id);
+            schedule_response(sc, maker, fstatus, q, fill->order_id, order->price, REASON_NONE);
+        }
 
     }
+
+    // an iceberg replenish above may have moved the pool, so in/ask_in could be stale
+    in = (Order*)fl_get(orders, exec_order_id);
+    if (is_pair)
+        ask_in = (Order*)fl_get(orders, ask_order_id);
 
     // gtc - leave whatever we have in the order, it rested
     // fok - order should be fully filled, by above loop
@@ -700,12 +791,17 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         rej_reason = ((in->status >> FOK_BIT) & 1) ? CXL_FOK_KILLED : CXL_IOC_UNFILLED;
     }
 
-    if (!is_cancel) {
-        // check exec_order_id to see if we had a partial fill
+    // a minted slice was already reserved at create; reserving again would double it
+    if (!is_cancel && !is_iceberg_replenish) {
+        // create reserves the whole iceberg up front, hidden half included
+        u32 reserve_q = in->quantity;
+        if (is_iceberg)
+            reserve_q += (u32)(in->second_quantity - before_quantity);
+
         if (is_buy)
-            cs->reserved_cash += in->quantity * in->price;
+            cs->reserved_cash += reserve_q * in->price;
         else
-            cs->reserved_shares += in->quantity;
+            cs->reserved_shares += reserve_q;
     }
 
     // the pair's bid reserve is handled above (is_buy); add the ask leg's share reserve.
@@ -723,6 +819,17 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             cs->reserved_cash -= cancelled->quantity * cancelled->price;
         } else {
             cs->reserved_shares -= cancelled->quantity;
+        }
+
+        // cancelling a tip kills the whole iceberg - the tip's reserve just came off above,
+        // now give back the hidden half too and free the struct
+        if ((cancelled->status >> ICEBERG_BIT) & 1) {
+            Iceberg* ice = (Iceberg*)fl_get(sc->icebergs, cancelled->second_id);
+            if ((cancelled->status >> BUY_DIRECTION_BIT) & 1)
+                cs->reserved_cash -= (u32)(ice->remaining * ice->price);
+            else
+                cs->reserved_shares -= (u32)ice->remaining;
+            fl_release(sc->icebergs, cancelled->second_id);
         }
 
         cancelled->quantity = 0;
@@ -838,16 +945,15 @@ void server_exec_end(ServerContext* sc) {
 
     server_order(sc, exec_order_id);
 
-    /*
-       if (need to convert stops)
-       schedule EXEC_TO_SW_ID eevent
-       u64 SW_TO_EXEC_DELAY = 100;
-       u64 socket_event = ((SERVER_TYPE & T_MASK) << PARAM_BITS) | (EXEC_TO_SW_ID & PARAM_MASK);
-       sch_schedule(sch, socket_event, SW_TO_EXEC_DELAY);
-       cb_queue(&(sc->convert_holder));
-       cb_queue(&CONVERT_SENTINEL_VALUE);
+    // server_order may have queued iceberg slices into convert_holder. cap the batch with a
+    // sentinel and schedule the drain into the sw queue - the same path stops will use
+    if (!cb_is_empty(sc->convert_holder)) {
+        u32 sentinel = CONVERT_SENTINEL_VALUE;
+        cb_queue(sc->convert_holder, &sentinel);
 
-     */
+        u64 SW_TO_EXEC_DELAY = 100;
+        sch_schedule(sch, build_event(SERVER_TYPE, EXEC_TO_SW_ID), SW_TO_EXEC_DELAY);
+    }
 
     if (cb_is_empty(sw_queue)){
         sc->executing = 0;
@@ -912,6 +1018,9 @@ void server_hw_to_sw(ServerContext* sc) {
 }
 
 void server_exec_to_sw(ServerContext* sc){
+    if (cb_is_empty(sc->convert_holder))
+        return;
+
     u32 synth_order_id = *(u32*)cb_deque(sc->convert_holder);
 
     if (cb_is_empty(sc->convert_holder) || synth_order_id == CONVERT_SENTINEL_VALUE) {
@@ -941,6 +1050,7 @@ void server_free(ServerContext* sc) {
     bs_free(sc->mbp_bs);
     free(sc->client_settings);
     fl_free(sc->responses);
+    fl_free(sc->icebergs);
     fl_free(sc->orders);
     cb_free(sc->fills);
     cb_free(sc->sw_queue);
