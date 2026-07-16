@@ -198,7 +198,10 @@ u8 client_maint_call(ClientSettings* cs, u16 mark) {
 
 // the usual stuff
 // 0 if the order can be worked, otherwise why it can't
-u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares){
+// fillable, if non-null, comes back with how much crosses on arrival - the iceberg create
+// path uses it to size a marketable slice. an iceberg prices the whole hidden total here,
+// not just the visible chunk, so the walk covers everything it might cross
+u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares, u32* fillable){
 
     // 0 - reclaim from cancelled order
     // 1 - figure out full fill "cost"
@@ -235,7 +238,9 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
             return REJ_INVALID_QUANTITY;
     }
 
-    u32 q_remain = in->quantity;
+    // walk the whole iceberg total, so fillable reflects everything it could cross
+    u32 order_q = is_iceberg ? in->second_quantity : in->quantity;
+    u32 q_remain = order_q;
 
     // abstract sense of how much it costs to fill the order, either cash or shares
     u32 cost = 0;
@@ -309,6 +314,10 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
     }
 
 
+    // whatever the walk consumed crossed on arrival; the rest would rest
+    if (fillable)
+        *fillable = order_q - q_remain;
+
     // 2. if liquidity isn't enough branch on GTC/IOC/FOK
 
     //is_gtc is_ioc is_fok
@@ -342,20 +351,6 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
     }
     // for ioc, we just ignore the remaining quantity
 
-    // the hidden half rests at the same price - fund the whole iceberg up front, same
-    // close attribution as any other resting quantity
-    if (is_iceberg) {
-        u32 hidden = in->second_quantity - in->quantity;
-        if (direction == 1)
-            cost += hidden * in->price;
-        else
-            cost += hidden;
-
-        u32 closing = hidden < close_q ? hidden : close_q;
-        close_q -= closing;
-        open_notional += (hidden - closing) * in->price;
-    }
-
     if (!cs->is_cash_account) {
         // reg t IS the gate, there is no second equity check. equity's job is maintenance
         if (client_bp(cs, mark, reclaimed_cash, reclaimed_shares) < open_notional)
@@ -387,7 +382,7 @@ u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark
     else
         reclaimed_shares += cancel->quantity;
 
-    return add_precheck(in, cs, mbo, mark, reclaimed_cash, reclaimed_shares);
+    return add_precheck(in, cs, mbo, mark, reclaimed_cash, reclaimed_shares, 0);
 }
 
 // 0 if both legs can be worked, otherwise why they can't. the bid is in the primary
@@ -535,6 +530,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     void* old_mbo_raw = bs_get_no_ref(mbo_bs, sc->last_mbo);
 
+    u32 fillable = 0; // how much an add crosses on arrival; the iceberg create sizes off it
+
     if (is_pair) {
         rej_reason = pair_precheck(in, ask_in, cs, orders, (MBO*)old_mbo_raw);
     } else if (is_can_rep) {
@@ -546,7 +543,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     } else if (is_iceberg_replenish) {
         // a minted slice is already funded and reserved from create time; it just rests
     } else {
-        rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0);
+        rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
     }
 
     // honestly if we truly have a method that can handle everything, we can send it here
@@ -595,14 +592,22 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         return;
     }
 
-    // a fresh iceberg: stash the hidden half in its own freelist (fl_insert copies it in)
-    // and stamp the visible slice with the id so every fill finds its way back. chunk is
-    // frozen now, before a cross-fill can shrink in->quantity
+    // a fresh iceberg. a marketable one swallows all the liquidity it crosses now and rests
+    // a tip on top (fillable + chunk), the rest hidden - so the hidden half is always worked
+    // from the resting side, never stranded. chunk is frozen before the cross shrinks it.
+    // nothing rests only when the whole total crosses (fillable == total), so no struct then
     if (is_iceberg) {
         status |= (1 << ICEBERG_BIT);
         if (!is_iceberg_replenish) {
-            Iceberg ice = { .client_id = in->client_id, .remaining = in->second_quantity - in->quantity, .price = in->price, .chunk = in->quantity };
-            in->second_id = fl_insert(sc->icebergs, &ice);
+            u32 total = in->second_quantity;
+            u32 chunk = in->quantity;
+            u32 visible = fillable + chunk < total ? fillable + chunk : total;
+            in->quantity = visible;
+            before_quantity = visible;
+            if (fillable < total) {
+                Iceberg ice = { .client_id = in->client_id, .remaining = total - visible, .price = in->price, .chunk = chunk };
+                in->second_id = fl_insert(sc->icebergs, &ice);
+            }
         }
     }
 
