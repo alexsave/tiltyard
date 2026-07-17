@@ -9,6 +9,7 @@
 #include "cb.h"
 #include "sch.h"
 #include "holder.h"
+#include "xpq.h"
 
 // order ids live well below MAX_U32 (see MIN_RESERVED_PACKET), so no real slice collides
 static const u32 CONVERT_SENTINEL_VALUE = MAX_U32;
@@ -45,6 +46,13 @@ typedef struct ServerContext {
     PQ* gtd;
     PQ* price_pq;
     CB* expire_cb;
+
+    // stop books, keyed (price << 32 | id): buys fire when the print rises to them, so the
+    // min heap surfaces the lowest trigger; sells fire on the way down, so a max heap.
+    // within a price the heap gives id order (meaningless - ids recycle), so each fired
+    // price group is re-sorted by arrival ns straight into convert_holder
+    PQ* buy_stops;
+    XPQ* sell_stops;
 
     u64* rand;
 
