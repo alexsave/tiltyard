@@ -34,6 +34,9 @@ typedef struct ClientSettings {
     u64 initial_wake;
     u64 processing_time;
     u64 net_latency;
+
+    // MBO, MBP, MBP10, MBP1, trade later
+    u8 sub_tier;
     
 } ClientSettings;
 

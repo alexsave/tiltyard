@@ -60,6 +60,12 @@ typedef struct ServerContext {
     u32 last_mbp;
     BS* mbp_bs;
 
+    u32 last_mbp10;
+    BS* mbp10_bs;
+
+    u32 last_mbp1;
+    BS* mbp1_bs;
+
 } ServerContext;
 
 

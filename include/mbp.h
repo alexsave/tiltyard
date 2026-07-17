@@ -15,10 +15,27 @@ typedef struct MBP {
     // after this is the actual order data
 } MBP;
 
+typedef struct MBP10 {
+    // first 4 bits are bid count, last 4 are ask count
+    // do not bother checking the index if 
+    // 0-9 are bids, 10-19 are asks
+    //u8 bid_ask_counts;
+    // nah fuck that just set price zero and call it a day
+    MBPIndex levels[20];
+}
+
+// EZ
+typedef struct MBP1 {
+    MBPIndex hi_bid;
+    MBPIndex lo_ask;
+}
+
 // how many bytes the mbp derived from this mbo needs (for the bs reservation)
 u32 mbp_derive_size(void* mbo_raw);
 // squash an mbo into its price-aggregated mbp
-void mbp_derive(void* mbp_raw, void* mbo_raw);
+// this should probably return a bit mask of which of MBP10, MBP1 were updated
+// or no, we dont' even need to do that
+void mbp_derive(ServerContext* cs);
 
 
 #endif

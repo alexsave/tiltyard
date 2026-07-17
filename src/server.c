@@ -69,6 +69,24 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     rand_next(sc->rand);
     sc->sch = sch_init(sc->rand);
 
+    // lesser subscription paths - this is the first fixed size one
+    sc->mbp10 = bs_init(32768);
+    void* mbp10_address = 0;
+    sc->last_mbp10 = bs_reserve(sc->mbp10, sizeof(MBP) + 2*10*sizeof(MBPIndex), 1, &mbp10_address);
+    ((MBP*)mbp10_address)->level_count = 0;
+    ((MBP*)mbp10_address)->hi_bid_index = MAX_U16;
+
+    sc->mbp1 = bs_init(32768);
+    void* mbp1_address = 0;
+    sc->last_mbp1 = bs_reserve(sc->mbp1, sizeof(MBP) + 2*sizeof(MBPIndex), 1, &mbp1_address);
+    ((MBP*)mbp1_address)->level_count = 0;
+    ((MBP*)mbp1_address)->hi_bid_index = MAX_U16;
+
+    // Trades won't actually use blob store as they are will actually be stored for the entire duration
+    // CB is fine for this and candles
+    // kinda orthogonal stream
+
+
     return sc;
 }
 
@@ -1203,12 +1221,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // might as well create a new MBP here. all we need is the new mbo
 
-    void* new_mbp_raw;
-    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
-    mbp_derive(new_mbp_raw, new_mbo_raw);
-
-    bs_get(sc->mbp_bs, sc->last_mbp);
-    sc->last_mbp = next_last_mbp;
+    mbp_derive(sc);
 
     bs_get(mbo_bs, prev_last_mbo);
     //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));
@@ -1346,12 +1359,16 @@ void server_prune_book(ServerContext* sc) {
     for (u32 i = 0; i < n; i++)
         cb_deque(sc->expire_cb);
 
-    void* new_mbp_raw;
-    u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
-    mbp_derive(new_mbp_raw, new_mbo_raw);
+    
+    mbp_derive(sc);
+    
 
-    bs_get(sc->mbp_bs, sc->last_mbp);
-    sc->last_mbp = next_last_mbp;
+    //void* new_mbp_raw;
+    //u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
+    //mbp_derive(new_mbp_raw, new_mbo_raw);
+//
+    //bs_get(sc->mbp_bs, sc->last_mbp);
+    //sc->last_mbp = next_last_mbp;
 
     bs_get(mbo_bs, prev_last_mbo);
 }
