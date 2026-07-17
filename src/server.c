@@ -1468,6 +1468,8 @@ void server_market_open(ServerContext* sc) {
     printf("[%llus] MARKET OPEN\n", sch_now_ns(sc->sch)/S_TO_NS);
 
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CLOSE), OPEN_TO_CLOSE_NS);
+    // start the per-second candle-close loop; it self-reschedules until the market closes
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS);
 }
 
 void server_market_close(ServerContext* sc) {
@@ -1499,6 +1501,37 @@ void server_market_close(ServerContext* sc) {
     if (today % 7 == FRIDAY_MOD)
         gap += WEEKEND_NS;
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_OPEN), gap);
+}
+
+// a bar of `duration` just ended: if one actually formed in the period that ended (its bucket
+// start is exactly now - duration), it's final, so hand it to that tier's subscribers.
+static void emit_closed_candle(ServerContext* sc, CB* candles, u64 duration, u8 tier) {
+    Candle* bar = (Candle*)cb_last(candles);
+    if (!bar || bar->time != sch_now_ns(sc->sch) - duration)
+        return; // no trade in the period that just ended, nothing new to close
+
+    // TODO: fan `bar` out to every ws client subscribed to `tier` via the stream roster
+    printf("CANDLE CLOSE tier %u t=%llus O=%u H=%u L=%u C=%u V=%u\n",
+           tier, bar->time / S_TO_NS, bar->open, bar->hi, bar->lo, bar->close, bar->volume);
+}
+
+// fired once a second while the market is open. the second just ended, and any longer duration
+// whose boundary we landed on ended too (a longer boundary is always a shorter one), so cascade.
+// outside trading hours we stop rescheduling - server_market_open restarts the loop each session.
+void server_candle_close(ServerContext* sc) {
+    if (!sc->is_open)
+        return;
+
+    u64 now = sch_now_ns(sc->sch);
+    emit_closed_candle(sc, sc->candles_sec, S_TO_NS, TIER_CANDLE_SEC);
+    if (now % MIN_TO_NS == 0)
+        emit_closed_candle(sc, sc->candles_min, MIN_TO_NS, TIER_CANDLE_MIN);
+    if (now % H_TO_NS == 0)
+        emit_closed_candle(sc, sc->candles_hr, H_TO_NS, TIER_CANDLE_HR);
+    if (now % DAY_TO_NS == 0)
+        emit_closed_candle(sc, sc->candles_day, DAY_TO_NS, TIER_CANDLE_DAY);
+
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS);
 }
 
 void server_exec_end(ServerContext* sc) {

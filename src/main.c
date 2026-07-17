@@ -244,6 +244,8 @@ int main(int argc, char* argv[]){
                 server_market_open(sc);
             } else if (control_id == CONTROL_PARAM_CLOSE) {
                 server_market_close(sc);
+            } else if (control_id == CONTROL_PARAM_CANDLE) {
+                server_candle_close(sc);
             } else if (control_id == CONTROL_PARAM_NEWS) {
                 // randomly set context to some value, and do not change it until next
 
