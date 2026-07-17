@@ -56,6 +56,13 @@ void cb_queue(CB* cb, void* value) {
     cb->end = (cb->end + 1) % cb->capacity;
 }
 
+void* cb_last(CB* cb) {
+    if (cb->start == INITIAL_START_INDEX)
+        return 0;
+
+    return cb->buffer + cb->start * cb->type_size;
+}
+
 void* cb_deque(CB* cb) {
     if (cb->start == INITIAL_START_INDEX)
         return 0;

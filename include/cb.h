@@ -25,6 +25,8 @@ typedef struct CB {
 CB* cb_init(u16 type_size);
 void cb_queue(CB* cb, void* value);
 void* cb_deque(CB* cb);
+// like dequee, but without actually removing
+void* cb_last(CB* cb);
 u8 cb_is_empty(CB* cb);
 // how many entries are queued right now
 u32 cb_count(CB* cb);
