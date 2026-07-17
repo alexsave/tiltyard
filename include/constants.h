@@ -50,7 +50,9 @@ static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 3;
 static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 4;
 static const u32 CONTROL_PARAM_OPEN = MAX_PARAM - 5;
 static const u32 CONTROL_PARAM_CLOSE = MAX_PARAM - 6;
-static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CLOSE;
+// fires once a second while the market is open to finalize/stream closed candles
+static const u32 CONTROL_PARAM_CANDLE = MAX_PARAM - 7;
+static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CANDLE;
 
 // 9:30 to 4pm eastern with no dst, so 14:30 to 21:00 utc. t=0 is midnight utc 1/1/1970,
 // which makes the first bell 14.5h in. a session runs 6.5h, the overnight gap 17.5h
