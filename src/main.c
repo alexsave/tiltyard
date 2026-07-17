@@ -44,7 +44,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 19 * H_TO_NS);
+    sch_schedule(sch, kill_event, 2 * DAY_TO_NS);
 
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
@@ -76,8 +76,10 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         context->real_time_ns = sch_now_ns(sch);
-        //printf("NOW %llu ~%llus - ", now_ns, now_ns/1000000000);
-        //log_full(next);
+        if (context->real_time_ns > 68990* S_TO_NS) {
+            printf("NOW %llu ~%llus - ", context->real_time_ns, context->real_time_ns/1000000000);
+            log_full(next);
+        }
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
