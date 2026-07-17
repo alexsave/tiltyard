@@ -14,6 +14,19 @@
 // order ids live well below MAX_U32 (see MIN_RESERVED_PACKET), so no real slice collides
 static const u32 CONVERT_SENTINEL_VALUE = MAX_U32;
 
+// which data stream a roster range feeds. each range carries one of these, so a client that
+// wants several streams is listed once per stream it subscribes to.
+static const u8 TIER_MBO = 0;
+static const u8 TIER_MBP = 1;
+static const u8 TIER_MBP10 = 2;
+static const u8 TIER_MBP1 = 3;
+static const u8 TIER_TRADE = 4;
+static const u8 TIER_CANDLE_SEC = 5;
+static const u8 TIER_CANDLE_MIN = 6;
+static const u8 TIER_CANDLE_HR = 7;
+static const u8 TIER_CANDLE_DAY = 8;
+static const u8 TIER_COUNT = TIER_CANDLE_DAY + 1;
+
 // basically everything we were holding as locals in src/main
 // bundled into a struct
 // also takes it off the stack and onto the beautiful heap
