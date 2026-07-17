@@ -3,10 +3,8 @@
 
 #include "types.h"
 
-static const UNIT_SEC = 0;
-static const UNIT_MIN = 1;
-static const UNIT_HR = 2;
-static const UNIT_DAY = 3;
+// ServerContext is defined in server.h; we only need the name for the prototype
+typedef struct ServerContext ServerContext;
 
 typedef struct Candle {
     // maybe duration makes mroe senes
