@@ -78,6 +78,10 @@ typedef struct Order {
     u16 second_price;
     u32 second_id;
 
+    // stamped by the server when the order reaches exec. ids recycle, so this is the only
+    // honest record of who got here first - stop triggers sort same-price batches by it
+    u64 ns;
+
 } Order;
 
 #endif
