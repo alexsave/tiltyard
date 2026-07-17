@@ -56,6 +56,9 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->expire_cb = cb_init(sizeof(u64));
     sc->buy_stops = pq_init(); // both (price << 32 | id), arrival order rides Order.ns
     sc->sell_stops = xpq_init();
+
+    sc->wake_above = pq_init(); // both (price << 32 | id), no ordering within a price
+    sc->wake_below = xpq_init();
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
@@ -122,6 +125,11 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     // fast check
     if (!is_ours)
         return REJ_NOT_YOUR_ORDER;
+
+    // a wake rests in a trigger heap with no quantity; live and ours is the whole check. a
+    // cancelled one carries the reject bit and reads as already done just below
+    if (((to_cancel->status >> WAKE_BIT) & 1) && !is_rejected)
+        return REASON_NONE;
 
     if (!is_active || is_rejected)
         return REJ_ORDER_ALREADY_DONE;
@@ -686,6 +694,53 @@ void check_stops(ServerContext* sc, u16 last) {
     }
 }
 
+// rest a wake in its trigger heap, keyed like a stop: an above-wake (buy direction) fires
+// when the print rises to its price, a below-wake when it falls. no tif - a wake just waits
+// until it fires or the client cancels it
+void wake_rest(ServerContext* sc, u32 order_id) {
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+    u64 entry = ((u64)o->price << 32) | order_id;
+
+    if ((o->status >> BUY_DIRECTION_BIT) & 1)
+        pq_push(sc->wake_above, entry);
+    else
+        xpq_push(sc->wake_below, entry);
+}
+
+// one popped wake entry. ids recycle, so the slot must still hold a live wake at this price
+// and side - a cancelled one carries the reject bit, a recycled slot fails the price/side
+// match. a fired wake sends the client a snapshot and hands its slot straight back
+void wake_fire(ServerContext* sc, u64 entry, u8 is_above) {
+    u32 order_id = (u32)(entry & MAX_U32);
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+
+    if (((o->status >> REJECT_BIT) & 1) || !((o->status >> WAKE_BIT) & 1))
+        return;
+
+    if (o->price != (u16)(entry >> 32) || (((o->status >> BUY_DIRECTION_BIT) & 1) != is_above))
+        return;
+
+    printf("WAKE #%u fired, price $%u\n", order_id, o->price);
+    // control: the ack carries the book snapshot and hands the spent slot back
+    schedule_response(sc, o->client_id, (1 << WAKE_BIT) | (1 << CONTROL_BIT), 0, order_id, o->price, REASON_NONE);
+}
+
+// a print at `last` fires every above-wake at or below it and every below-wake at or above
+// it. no batch ordering (a wake has no market effect), so entries just pop and notify
+void check_wakes(ServerContext* sc, u16 last) {
+    while (!pq_is_empty(sc->wake_above)) {
+        if ((u16)(pq_peek(sc->wake_above) >> 32) > last)
+            break;
+        wake_fire(sc, pq_pop(sc->wake_above), 1);
+    }
+
+    while (!xpq_is_empty(sc->wake_below)) {
+        if ((u16)(xpq_peek(sc->wake_below) >> 32) < last)
+            break;
+        wake_fire(sc, xpq_pop(sc->wake_below), 0);
+    }
+}
+
 // much better
 // the big driver of all market book stuff
 // this mostly takes care of scheduling, then passes it off to server_order
@@ -761,6 +816,25 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if ((is_ping || is_toggle_ws) && in->quantity == 0 && !is_pair && !is_cancel && !is_can_rep) {
         status |= (1 << CONTROL_BIT);
         schedule_response(sc, in->client_id, status, 0, exec_order_id, 0, REASON_NONE);
+        return;
+    }
+
+    // a wake is like a ping - no quantity, never reaches the book - but instead of acking and
+    // leaving it rests in a trigger heap keyed by its price and keeps its slot, so the client
+    // can cancel it by id. the wake bit is exclusive: it owns every order carrying it, so a
+    // cancel/replace/pair/stop/iceberg riding along is malformed and rejected here. to cancel
+    // a wake the client sends a plain cancel (no wake bit) at its id, which skips this branch
+    u8 is_wake = (in->status >> WAKE_BIT) & 1;
+    if (is_wake) {
+        u8 conflict = is_cancel | is_can_rep | is_pair | is_stop | is_iceberg;
+        if (conflict || in->price == 0) {
+            in->status |= (1 << REJECT_BIT);
+            u8 why = conflict ? REJ_BAD_QUALIFIER : REJ_INVALID_PRICE;
+            schedule_response(sc, in->client_id, (1 << WAKE_BIT) | (1 << REJECT_BIT), 0, exec_order_id, 0, why);
+            return;
+        }
+        wake_rest(sc, exec_order_id);
+        schedule_response(sc, in->client_id, (1 << WAKE_BIT), 0, exec_order_id, in->price, REASON_NONE);
         return;
     }
 
@@ -885,13 +959,19 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // the idea is do some quick validation on the stop order
     // let me sleep on this
 
-    // cancelling an armed stop needs no snapshot. no reserve to return, and the heap
-    // entry left behind dies on the fire guards
+    // cancelling an armed stop or a wake needs no snapshot: no reserve to return and nothing
+    // in the book. the stop has quantity to zero, the wake only its reject-bit tombstone -
+    // either way the heap entry left behind dies on the fire guards
     if (is_cancel) {
         Order* cancelled = (Order*)fl_get(orders, in->other_id);
         if ((cancelled->status >> HAS_STOP_BIT) & 1) {
             cancelled->quantity = 0;
             schedule_response(sc, in->client_id, status, 0, exec_order_id, cancelled->stop_price, REASON_NONE);
+            return;
+        }
+        if ((cancelled->status >> WAKE_BIT) & 1) {
+            cancelled->status |= (1 << REJECT_BIT);
+            schedule_response(sc, in->client_id, status, 0, exec_order_id, cancelled->price, REASON_NONE);
             return;
         }
     }
@@ -1249,6 +1329,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         check_stops(sc, (u16)last_trade_price);
         // a fired oco stop pulls its resting partner right here at the trigger
         oco_sweep(sc, fired_start);
+        // same print wakes any price alert it crossed - no book effect, so it stands apart
+        check_wakes(sc, (u16)last_trade_price);
     }
 
 
@@ -1542,6 +1624,8 @@ void server_free(ServerContext* sc) {
     pq_free(sc->price_pq);
     pq_free(sc->buy_stops);
     xpq_free(sc->sell_stops);
+    pq_free(sc->wake_above);
+    xpq_free(sc->wake_below);
 
     free(sc->rand);
 

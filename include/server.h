@@ -54,6 +54,12 @@ typedef struct ServerContext {
     PQ* buy_stops;
     XPQ* sell_stops;
 
+    // price wakes, same (price << 32 | id) key: an above-wake fires when the print rises to
+    // it (min heap surfaces the lowest), a below-wake when it falls (max heap). no market
+    // side effect, so no ns ordering - each fired entry just sends the client a snapshot
+    PQ* wake_above;
+    XPQ* wake_below;
+
     u64* rand;
 
     // mirror of MBO

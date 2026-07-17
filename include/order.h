@@ -35,6 +35,9 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // a market order has no price to rest at, so it must carry one of these
 // set by the server on a ping/ws ack: nothing rests, so the client's slot is freed
 // day rests only for this session, gtd until its date (day index carried in second_id)
+// a wake carries no quantity and never reaches the book, like a ping - it rests in a trigger
+// heap keyed by its price (reused field), and the client keeps its id to cancel it
+static const u8 WAKE_BIT = 19;
 static const u8 GTD_BIT = 18;
 static const u8 DAY_BIT = 17;
 static const u8 ICEBERG_BIT = 16;
