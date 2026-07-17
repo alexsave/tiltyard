@@ -20,7 +20,7 @@
 #include "iceberg.h"
 
 #include "mbp.h"
-#incldue "trade.h"
+#include "trade.h"
 
 // yeah you need these two to initialize the server, cuz really it initalizes everything
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
@@ -63,6 +63,12 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
+
+    sc->trades = cb_init(sizeof(Trade));
+    sc->candles_sec = cb_init(sizeof(Candle));
+    sc->candles_min = cb_init(sizeof(Candle));
+    sc->candles_hr = cb_init(sizeof(Candle));
+    sc->candles_day = cb_init(sizeof(Candle));
 
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
     sc->fills = cb_init(sizeof(Fill));
@@ -1132,7 +1138,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         // later for trade table: we just need direction, price, quantity, time
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
-        update_trade(cs, q, order->price, taker_is_buy);
+        update_trade(sc, q, order->price, taker_is_buy);
 
         // the cancelled trade cannot show up here
         // in fact it shoudln't even be here
@@ -1617,6 +1623,11 @@ void server_free(ServerContext* sc) {
     fl_free(sc->icebergs);
     fl_free(sc->orders);
     cb_free(sc->fills);
+    cb_free(sc->trades);
+    cb_free(sc->candles_sec);
+    cb_free(sc->candles_min);
+    cb_free(sc->candles_hr);
+    cb_free(sc->candles_day);
     cb_free(sc->sw_queue);
     cb_free(sc->hw_queue);
     cb_free(sc->convert_holder);

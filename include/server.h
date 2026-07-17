@@ -72,6 +72,14 @@ typedef struct ServerContext {
     u32 last_mbp1;
     BS* mbp1_bs;
 
+    // trade tape and the candlestick series derived from it (see trade.c). candles are only
+    // ever appended, never dequeued, so each buffer reads back as a flat time-ordered array.
+    CB* trades;
+    CB* candles_sec;
+    CB* candles_min;
+    CB* candles_hr;
+    CB* candles_day;
+
 } ServerContext;
 
 

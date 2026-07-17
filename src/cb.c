@@ -60,7 +60,8 @@ void* cb_last(CB* cb) {
     if (cb->start == INITIAL_START_INDEX)
         return 0;
 
-    return cb->buffer + cb->start * cb->type_size;
+    // most recently queued entry: end points one past it, so step back one (wrapping)
+    return cb->buffer + ((cb->end + cb->capacity - 1) % cb->capacity) * cb->type_size;
 }
 
 void* cb_deque(CB* cb) {
