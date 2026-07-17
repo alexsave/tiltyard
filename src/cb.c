@@ -76,6 +76,17 @@ u8 cb_is_empty(CB* cb) {
     return cb->start == INITIAL_START_INDEX;
 }
 
+u32 cb_count(CB* cb) {
+    if (cb_is_empty(cb))
+        return 0;
+    // start == end means completely full, so the -1 +1 dance keeps that from reading as 0
+    return ((u32)cb->end + cb->capacity - cb->start - 1) % cb->capacity + 1;
+}
+
+void* cb_at(CB* cb, u32 i) {
+    return cb->buffer + ((cb->start + i) % cb->capacity) * cb->type_size;
+}
+
 void cb_free(CB* cb) {
     free(cb->buffer);
 

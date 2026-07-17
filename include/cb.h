@@ -26,6 +26,11 @@ CB* cb_init(u16 type_size);
 void cb_queue(CB* cb, void* value);
 void* cb_deque(CB* cb);
 u8 cb_is_empty(CB* cb);
+// how many entries are queued right now
+u32 cb_count(CB* cb);
+// the i-th entry from the front without dequeuing (0 = next out). the ring can wrap, so
+// callers can't just index the buffer
+void* cb_at(CB* cb, u32 i);
 void cb_free(CB* cb);
 
 #endif
