@@ -1,5 +1,5 @@
 OBJDIR := out
-OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o xpq.o fl.o bs.o sch.o client_zero.o cb.o client_one.o holder.o client.o ob.o mbp.o server.o utils.o)
+OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o xpq.o fl.o bs.o sch.o client_zero.o cb.o client_one.o holder.o client.o ob.o mbp.o server.o utils.o trade.o)
 
 FLAGS := -g -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
 

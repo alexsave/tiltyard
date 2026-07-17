@@ -20,6 +20,7 @@
 #include "iceberg.h"
 
 #include "mbp.h"
+#incldue "trade.h"
 
 // yeah you need these two to initialize the server, cuz really it initalizes everything
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
@@ -1131,6 +1132,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         // later for trade table: we just need direction, price, quantity, time
         printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
+        update_trade(cs, q, order->price, taker_is_buy);
 
         // the cancelled trade cannot show up here
         // in fact it shoudln't even be here
