@@ -44,7 +44,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 5 * H_TO_NS);
+    sch_schedule(sch, kill_event, 19 * H_TO_NS);
 
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
