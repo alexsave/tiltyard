@@ -70,15 +70,15 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->sch = sch_init(sc->rand);
 
     // lesser subscription paths - this is the first fixed size one
-    sc->mbp10 = bs_init(32768);
+    sc->mbp10_bs = bs_init(32768);
     void* mbp10_address = 0;
-    sc->last_mbp10 = bs_reserve(sc->mbp10, sizeof(MBP) + 2*10*sizeof(MBPIndex), 1, &mbp10_address);
+    sc->last_mbp10 = bs_reserve(sc->mbp10_bs, sizeof(MBP10), 1, &mbp10_address);
     ((MBP*)mbp10_address)->level_count = 0;
     ((MBP*)mbp10_address)->hi_bid_index = MAX_U16;
 
-    sc->mbp1 = bs_init(32768);
+    sc->mbp1_bs = bs_init(32768);
     void* mbp1_address = 0;
-    sc->last_mbp1 = bs_reserve(sc->mbp1, sizeof(MBP) + 2*sizeof(MBPIndex), 1, &mbp1_address);
+    sc->last_mbp1 = bs_reserve(sc->mbp1_bs, sizeof(MBP1), 1, &mbp1_address);
     ((MBP*)mbp1_address)->level_count = 0;
     ((MBP*)mbp1_address)->hi_bid_index = MAX_U16;
 

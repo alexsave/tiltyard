@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "mbp.h"
 #include "ob.h"
 #include "types.h"
@@ -15,19 +16,21 @@ void mbp1_derive(ServerContext* sc) {
 
     void* new_mbp1_raw;
     u32 new_last_mbp1 = bs_reserve(sc->mbp1_bs, sizeof(MBP1), 1, &new_mbp1_raw);
-    MBP10* new_mbp10 = (MBP10*)(bs_get_no_ref(sc->mbp10_bs, sc->last_mbp10))
+    MBP10* new_mbp10 = (MBP10*)(bs_get_no_ref(sc->mbp10_bs, sc->last_mbp10));
     MBP1* new_mbp1 = (MBP1*)(new_mbp1_raw);
-    
+
     u8 HI_BID_INDEX = 9;
     u8 LO_ASK_INDEX = 10;
 
-    new_mbp1->hi_bid->quantity = (new_mbp10->levels + HI_BID_INDEX)->quantity;
-    new_mbp1->hi_bid->price = (new_mbp10->levels + HI_BID_INDEX)->price;
-    new_mbp1->lo_ask->quantity = (new_mbp10->levels + LO_ASK_INDEX)->quantity;
-    new_mbp1->lo_ask->price = (new_mbp10->levels + LO_ASK_INDEX)->price;
+    MBPIndex* hi_bid = &new_mbp1->hi_bid;
+    MBPIndex* lo_ask = &new_mbp1->lo_ask;
+    hi_bid->quantity = (new_mbp10->levels + HI_BID_INDEX)->quantity;
+    hi_bid->price = (new_mbp10->levels + HI_BID_INDEX)->price;
+    lo_ask->quantity = (new_mbp10->levels + LO_ASK_INDEX)->quantity;
+    lo_ask->price = (new_mbp10->levels + LO_ASK_INDEX)->price;
 
     bs_get(sc->mbp1_bs, sc->last_mbp1);
-    sc->last_mbp1 = next_last_mbp1;
+    sc->last_mbp1 = new_last_mbp1;
 }
 
 // we dont need level count or hi bid index, but we should do like
@@ -39,12 +42,10 @@ void mbp10_derive(ServerContext* sc) {
     void* new_mbp10_raw;
     u32 next_last_mbp10 = bs_reserve(sc->mbp10_bs, sizeof(MBP10), 1, &new_mbp10_raw);
     MBP* new_mbp = (MBP*)(bs_get_no_ref(sc->mbp_bs, sc->last_mbp));
-    MBP10* new_mbp10 = (MBP10*)new_mbp_10_raw;
+    MBP10* new_mbp10 = (MBP10*)new_mbp10_raw;
 
 
     for (u8 i = 0; i < 20; i++) {
-        MBPI* old_mbp10_level = old_mbp10->level + i;
-
         u16 new_quantity = 0;
         u16 new_price = 0;
         // put it on the toher side and i think we're good? if 
@@ -55,8 +56,9 @@ void mbp10_derive(ServerContext* sc) {
             new_price = new_mbp->levels[i + new_mbp->hi_bid_index - 9].price;
         }
 
-        new_mbp_10_raw->quantity = new_quantity;
-        new_mbp_10_raw->price = new_price;
+        MBPIndex* new_level = new_mbp10->levels + i;
+        new_level->quantity = new_quantity;
+        new_level->price = new_price;
     }
 
     // ez check
@@ -68,11 +70,19 @@ void mbp10_derive(ServerContext* sc) {
 
 
 
+    // compare BEFORE dropping the old slot, else old_mbp10 dangles
+    MBPIndex* old_hi_bid = old_mbp10->levels + HI_BID_INDEX;
+    MBPIndex* new_hi_bid = new_mbp10->levels + HI_BID_INDEX;
+    MBPIndex* old_lo_ask = old_mbp10->levels + LO_ASK_INDEX;
+    MBPIndex* new_lo_ask = new_mbp10->levels + LO_ASK_INDEX;
+    u8 hi_bid_changed = (old_hi_bid->quantity != new_hi_bid->quantity) || (old_hi_bid->price != new_hi_bid->price);
+    u8 lo_ask_changed = (old_lo_ask->quantity != new_lo_ask->quantity) || (old_lo_ask->price != new_lo_ask->price);
+
     // drop old mbp 10
-    bs_get(sc->mbp_bs, sc->last_mbp10);
+    bs_get(sc->mbp10_bs, sc->last_mbp10);
     sc->last_mbp10 = next_last_mbp10;
 
-    if ((old_mbp10->levels + HI_BID_INDEX)->quantity != new_mbp10->levels + HI_BID_INDEX)->quantity) || (old_mbp10->levels + HI_BID_INDEX)->price != new_mbp10->levels + HI_BID_INDEX)->price))
+    if (hi_bid_changed || lo_ask_changed)
         mbp1_derive(sc);
 }
 
@@ -132,7 +142,7 @@ void mbp_derive(ServerContext* sc){
         // athit this point we know the counts are unchanged or they were above 10 and thus we can't tell just by coutning levels
         for (u8 i = 0; i < 20; i++) {
 
-            MBPI* old_mbp10_level = old_mbp10->level + i;
+            MBPIndex* old_mbp10_level = old_mbp10->levels + i;
 
             u16 new_quantity = 0;
             u16 new_price = 0;
@@ -148,19 +158,19 @@ void mbp_derive(ServerContext* sc){
             // this is just rearranged to avoid negatvies and simplified with alg
             // ah this is tricky cuz 0 + 65535 is just 65535, not < 9
             // put it on the toher side and i think we're good? if 
-            if ( i < (i16)(9 - new_mbp->hi_bid_index)){
+            if ( i < (i16)(9 - mbp->hi_bid_index)){
                 // dont assign, it should be 0 in the next one
-            } else if (( i  + new_mbp->hi_bid_index > new_mbp->level_count+8)){
+            } else if (( i  + mbp->hi_bid_index > mbp->level_count+8)){
                 // 10 bids case:
                 // i + 9 > 10 + 8, so only i = 10 will match
                 // also dont assign, it should be 0 here
 
             } else {
-                new_quantity = new_mbp->levels[i + new_mbp->hi_bid_index - 9].quantity;
-                new_price = new_mbp->levels[i + new_mbp->hi_bid_index - 9].price;
+                new_quantity = mbp->levels[i + mbp->hi_bid_index - 9].quantity;
+                new_price = mbp->levels[i + mbp->hi_bid_index - 9].price;
 
             }
-            if (new_quantity != (old_mbp10_level)->quantity) || (new_price != old_mbp10_level->price) {
+            if ((new_quantity != old_mbp10_level->quantity) || (new_price != old_mbp10_level->price)) {
                 mbp10_update = 1;
                 break;
             }
@@ -190,6 +200,47 @@ void mbp_derive(ServerContext* sc){
     if (mbp10_update) {
         mbp10_derive(sc);
     }
+}
+
+// full-depth price view; hi_bid_index marks the best bid, like mbo_dump
+void mbp_dump(void* mbp_raw) {
+    MBP* mbp = (MBP*)mbp_raw;
+    printf("mbp at %p\n", mbp_raw);
+    printf("===MBP DUMP===\n");
+    printf("MBP with %u levels and hi bid index %u\n", mbp->level_count, mbp->hi_bid_index);
+    for (u16 i = 0; i < mbp->level_count; i++) {
+        MBPIndex level = mbp->levels[i];
+        if (i == mbp->hi_bid_index)
+            printf("[level\t%uc with quantity\t%u] - highest bid\n", level.price, level.quantity);
+        else
+            printf(" level\t%uc with quantity\t%u\n", level.price, level.quantity);
+    }
+    printf("===MBP DUMP END===\n");
+}
+
+// fixed 20-slot window: 0-9 bids (9 = best bid), 10-19 asks (10 = best ask)
+void mbp10_dump(void* mbp10_raw) {
+    MBP10* mbp10 = (MBP10*)mbp10_raw;
+    printf("mbp10 at %p\n", mbp10_raw);
+    printf("===MBP10 DUMP===\n");
+    for (u8 i = 0; i < 20; i++) {
+        MBPIndex level = mbp10->levels[i];
+        char* tag = "";
+        if (i == 9) tag = " - best bid";
+        else if (i == 10) tag = " - best ask";
+        printf(" slot %2u\t%uc with quantity\t%u%s\n", i, level.price, level.quantity, tag);
+    }
+    printf("===MBP10 DUMP END===\n");
+}
+
+// top of book only
+void mbp1_dump(void* mbp1_raw) {
+    MBP1* mbp1 = (MBP1*)mbp1_raw;
+    printf("mbp1 at %p\n", mbp1_raw);
+    printf("===MBP1 DUMP===\n");
+    printf(" hi_bid\t%uc with quantity\t%u\n", mbp1->hi_bid.price, mbp1->hi_bid.quantity);
+    printf(" lo_ask\t%uc with quantity\t%u\n", mbp1->lo_ask.price, mbp1->lo_ask.quantity);
+    printf("===MBP1 DUMP END===\n");
 }
 
 
