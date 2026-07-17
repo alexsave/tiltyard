@@ -54,6 +54,8 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->gtd = pq_init(); // (date << 32 | id), lives across closes
     sc->price_pq = pq_init();
     sc->expire_cb = cb_init(sizeof(u64));
+    sc->buy_stops = pq_init(); // both (price << 32 | id), arrival order rides Order.ns
+    sc->sell_stops = xpq_init();
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
@@ -105,6 +107,12 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
 
     if (!is_active || is_rejected)
         return REJ_ORDER_ALREADY_DONE;
+
+    // an armed stop (stop-only or a combined order's minted leg) rests in a trigger heap,
+    // not the book - live and ours is the whole check. a fired one already cleared the
+    // bit, so it correctly falls through to the book walk and misses
+    if ((to_cancel->status >> HAS_STOP_BIT) & 1)
+        return REASON_NONE;
 
     u8 in_book = 0;
     // OH ALSO IS IT IN THE DARN BOOK
@@ -373,6 +381,33 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
 
 }
 
+// runs on the arriving stop order. the stop half lives in the second_* fields (trigger in
+// stop_price); the primary fields are an optional NOW order that goes in immediately and
+// validates through add_precheck like any other. only the stop's shape is checked here -
+// it funds at trigger time, when it converts to a market/limit and rejoins the sw queue
+u8 stop_precheck(Order* in) {
+    if (in->second_quantity == 0)
+        return REJ_INVALID_QUANTITY;
+
+    if (in->stop_price == 0)
+        return REJ_INVALID_PRICE;
+
+    // stop limit converts to a limit at second_price, so there has to be one
+    if (((in->status >> STOP_LIMIT_BIT) & 1) && in->second_price == 0)
+        return REJ_INVALID_PRICE;
+
+    // second_quantity is already the iceberg total - the fields can't serve two masters
+    if ((in->status >> ICEBERG_BIT) & 1)
+        return REJ_BAD_QUALIFIER;
+
+    // oco on a combined order brackets its two halves, which only works if the NOW half
+    // can rest - a market NOW filling would instantly pull its own protection
+    if (((in->status >> OCO_BIT) & 1) && in->quantity > 0 && ((in->status >> IS_MARKET_BIT) & 1))
+        return REJ_BAD_QUALIFIER;
+
+    return REASON_NONE;
+}
+
 u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark) {
     // here, we will enforce a valid cancellation
     u8 cancel_reason = cancel_precheck(in, orders, mbo);
@@ -382,10 +417,24 @@ u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark
     u32 reclaimed_cash = 0;
     u32 reclaimed_shares = 0;
     Order* cancel = (Order*)fl_get(orders, in->other_id);
-    if ((cancel->status >> BUY_DIRECTION_BIT) & 1)
+    // an armed stop reserved nothing, so replacing one reclaims nothing
+    if ((cancel->status >> HAS_STOP_BIT) & 1) {
+    } else if ((cancel->status >> BUY_DIRECTION_BIT) & 1) {
         reclaimed_cash += cancel->quantity * cancel->price;
-    else
+    } else {
         reclaimed_shares += cancel->quantity;
+    }
+
+    // fidelity style: the replacement can carry a stop half, or be one outright
+    if ((in->status >> HAS_STOP_BIT) & 1) {
+        u8 stop_reason = stop_precheck(in);
+        if (stop_reason)
+            return stop_reason;
+
+        // stop-only replacement: nothing executes now, so nothing more to fund
+        if (in->quantity == 0)
+            return REASON_NONE;
+    }
 
     return add_precheck(in, cs, mbo, mark, reclaimed_cash, reclaimed_shares, 0);
 }
@@ -395,12 +444,13 @@ u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark
 u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* mbo) {
     u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
-    u8 ask_is_cr = (ask_in->status >> CAN_REP_BIT) & 1;
+    u8 ask_is_can_rep = (ask_in->status >> CAN_REP_BIT) & 1;
     u8 is_market = (in->status >> IS_MARKET_BIT) & 1;
     u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
 
-    // both legs of a pair are resting quotes, so a market or ioc/fok pair is nonsense
-    if (is_market || !is_gtc)
+    // both legs of a pair are resting quotes, so a market or ioc/fok pair is nonsense.
+    // and second_* is the ask leg here, so a stop half has nowhere to live
+    if (is_market || !is_gtc || ((in->status >> HAS_STOP_BIT) & 1))
         return REJ_BAD_QUALIFIER;
 
     // a replacing or cancelling leg needs a valid cancel. a stale / nonexistent / not-ours
@@ -409,9 +459,15 @@ u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* 
     if (bid_cancel_reason)
         return bid_cancel_reason;
 
-    u8 ask_cancel_reason = (ask_is_cr | is_cancel) ? cancel_precheck(ask_in, orders, mbo) : REASON_NONE;
+    u8 ask_cancel_reason = (ask_is_can_rep | is_cancel) ? cancel_precheck(ask_in, orders, mbo) : REASON_NONE;
     if (ask_cancel_reason)
         return ask_cancel_reason;
+
+    // the pair book op can only splice book residents, so neither leg may pull a stop
+    if ((is_can_rep | is_cancel) && ((((Order*)fl_get(orders, in->other_id))->status >> HAS_STOP_BIT) & 1))
+        return REJ_BAD_QUALIFIER;
+    if ((ask_is_can_rep | is_cancel) && ((((Order*)fl_get(orders, ask_in->other_id))->status >> HAS_STOP_BIT) & 1))
+        return REJ_BAD_QUALIFIER;
 
     // a pure cancel pair just pulls both quotes, so it has nothing to order, size or fund
     if (is_cancel)
@@ -437,7 +493,7 @@ u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* 
         if ((oc->status >> BUY_DIRECTION_BIT) & 1) freed_cash += oc->quantity * oc->price;
         else freed_shares += oc->quantity;
     }
-    if (ask_is_cr) {
+    if (ask_is_can_rep) {
         Order* oc = (Order*)fl_get(orders, ask_in->other_id);
         if ((oc->status >> BUY_DIRECTION_BIT) & 1) freed_cash += oc->quantity * oc->price;
         else freed_shares += oc->quantity;
@@ -456,6 +512,120 @@ u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* 
     return REASON_NONE;
 }
 
+
+// rest a canonical stop (params in its primary fields) in its trigger heap: buys fire on
+// the way up, so a min heap surfaces the lowest trigger; sells fire on the way down, max
+// heap. arrival order isn't in the key - the ns stamp settles ties at fire time. day/gtd
+// bookkeeping is here because the resting paths below never see this order
+void stop_rest(ServerContext* sc, u32 order_id) {
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+    u64 entry = ((u64)o->stop_price << 32) | order_id;
+
+    if ((o->status >> BUY_DIRECTION_BIT) & 1)
+        pq_push(sc->buy_stops, entry);
+    else
+        xpq_push(sc->sell_stops, entry);
+
+    if ((o->status >> DAY_BIT) & 1)
+        cb_queue(sc->day_orders, &order_id);
+    else if ((o->status >> GTD_BIT) & 1)
+        pq_push(sc->gtd, ((u64)o->second_id << 32) | order_id);
+}
+
+// keep the batch in convert_holder sorted by arrival: if the newcomer isn't the newest,
+// re-queue the current last entry to grow the ring (the first shift), slide the rest
+// right until the gap is where the newcomer belongs, and write it once. batches are one
+// trigger price's worth, so they're small - revisit if that stops being true
+void stop_batch_insert(ServerContext* sc, u32 batch_start, u32 order_id) {
+    CB* ch = sc->convert_holder;
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+    u64 ns = o->ns;
+
+    u32 n = cb_count(ch);
+    if (n > batch_start) {
+        u32 last = *(u32*)cb_at(ch, n - 1);
+        Order* last_o = (Order*)fl_get(sc->orders, last);
+
+        if (last_o->ns > ns) {
+            // local copy - cb_queue can double the ring, freeing what cb_at pointed into
+            cb_queue(ch, &last);
+
+            u32 gap = n - 1;
+            while (gap > batch_start) {
+                u32 prev = *(u32*)cb_at(ch, gap - 1);
+                Order* prev_o = (Order*)fl_get(sc->orders, prev);
+                if (prev_o->ns <= ns)
+                    break;
+                *(u32*)cb_at(ch, gap) = prev;
+                gap--;
+            }
+            *(u32*)cb_at(ch, gap) = order_id;
+            return;
+        }
+    }
+
+    // newest arrival (or first of the batch): it just goes on the end
+    cb_queue(ch, &order_id);
+}
+
+// one popped heap entry. ids recycle, so the slot must still hold a live armed stop
+// matching the price and side this entry fired under - anything else means someone else
+// lives here now, and the entry just dies
+void stop_fire(ServerContext* sc, u64 entry, u8 is_buy, u32 batch_start) {
+    u32 order_id = (u32)(entry & MAX_U32);
+    Order* o = (Order*)fl_get(sc->orders, order_id);
+
+    if (o->quantity == 0 || ((o->status >> REJECT_BIT) & 1) || !((o->status >> HAS_STOP_BIT) & 1))
+        return;
+
+    if (o->stop_price != (u16)(entry >> 32) || (((o->status >> BUY_DIRECTION_BIT) & 1) != is_buy))
+        return;
+
+    // convert in place: a stop limit becomes a plain limit at its price, a plain stop a
+    // market order - ioc implied, since a market order has nothing to rest at
+    o->status &= ~(1 << HAS_STOP_BIT);
+    if ((o->status >> STOP_LIMIT_BIT) & 1) {
+        o->status &= ~(1 << STOP_LIMIT_BIT);
+    } else {
+        o->status |= (1 << IS_MARKET_BIT);
+        if (!((o->status >> FOK_BIT) & 1))
+            o->status |= (1 << IOC_BIT);
+    }
+
+    printf("STOP #%u fired, trigger $%u\n", order_id, o->stop_price);
+    stop_batch_insert(sc, batch_start, order_id);
+}
+
+// a print at `last` fires every buy stop with trigger at or below it, and every sell stop
+// at or above it. one price group at a time, each landing in convert_holder in arrival
+// order - within a price the heap gives id order, and ids recycle, so it means nothing
+void check_stops(ServerContext* sc, u16 last) {
+    while (!pq_is_empty(sc->buy_stops)) {
+        u16 price = (u16)(pq_peek(sc->buy_stops) >> 32);
+        if (price > last)
+            break;
+
+        u32 batch_start = cb_count(sc->convert_holder);
+        while (!pq_is_empty(sc->buy_stops)) {
+            if ((u16)(pq_peek(sc->buy_stops) >> 32) != price)
+                break;
+            stop_fire(sc, pq_pop(sc->buy_stops), 1, batch_start);
+        }
+    }
+
+    while (!xpq_is_empty(sc->sell_stops)) {
+        u16 price = (u16)(xpq_peek(sc->sell_stops) >> 32);
+        if (price < last)
+            break;
+
+        u32 batch_start = cb_count(sc->convert_holder);
+        while (!xpq_is_empty(sc->sell_stops)) {
+            if ((u16)(xpq_peek(sc->sell_stops) >> 32) != price)
+                break;
+            stop_fire(sc, xpq_pop(sc->sell_stops), 0, batch_start);
+        }
+    }
+}
 
 // much better
 // the big driver of all market book stuff
@@ -516,10 +686,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;   // for a pair, this is the bid leg
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
-    u8 ask_is_cr = is_pair ? ((ask_in->status >> CAN_REP_BIT) & 1) : 0;
+    u8 ask_is_can_rep = is_pair ? ((ask_in->status >> CAN_REP_BIT) & 1) : 0;
     // create leaves second_id at MAX_U32; a minted slice carries its iceberg id
     u8 is_iceberg = (in->status >> ICEBERG_BIT) & 1;
     u8 is_iceberg_replenish = is_iceberg && in->second_id != MAX_U32;
+    // still armed. a triggered stop comes back through here with the bit already cleared
+    u8 is_stop = (in->status >> HAS_STOP_BIT) & 1;
     // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
     u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
 
@@ -544,11 +716,22 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     } else if (is_can_rep) {
         rej_reason = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
         status |= (1 << CAN_REP_BIT);
+        if (is_stop)
+            status |= (1 << HAS_STOP_BIT);
     } else if (is_cancel) {
         rej_reason = cancel_precheck(in, orders, (MBO*)old_mbo_raw);
         status |= (1 << CANCEL_BIT);
+        // a stray stop half on a pure cancel was never validated - ignore it
+        is_stop = 0;
     } else if (is_iceberg_replenish) {
         // a minted slice is already funded and reserved from create time; it just rests
+    } else if (is_stop) {
+        rej_reason = stop_precheck(in);
+        // quantity > 0 means there's a NOW half - a real order executing right now, so it
+        // validates and funds like one. either half failing rejects the whole message
+        if (!rej_reason && in->quantity > 0)
+            rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
+        status |= (1 << HAS_STOP_BIT);
     } else {
         rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
     }
@@ -599,6 +782,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         return;
     }
 
+    // arrival stamp - ids recycle, this doesn't. stop triggers sort same-price groups by it
+    in->ns = now_ns;
+
     // a fresh iceberg. a marketable one swallows all the liquidity it crosses now and rests
     // a tip on top (fillable + chunk), the rest hidden - so the hidden half is always worked
     // from the resting side, never stranded. chunk is frozen before the cross shrinks it.
@@ -622,6 +808,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     printf("client #%u [$%lld/$%u/%lldq/%uq] ", in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
     if (is_cancel) {
         printf("cancel order #%u ", in->other_id);
+    } else if (is_stop) {
+        if (in->quantity > 0)
+            printf("%s %s %ush @ $%u + ", ((in->status >> IS_MARKET_BIT) & 1) ? "market" : "limit", is_buy ? "buy" : "sell", in->quantity, in->price);
+        printf("stop %s %s %ush trigger $%u ", ((in->status >> STOP_LIMIT_BIT) & 1) ? "limit" : "market", in->second_direction ? "buy" : "sell", in->second_quantity, in->stop_price);
     } else {
         printf("%s %s %ush @ $%u ", ((in->status >> IS_MARKET_BIT) & 1) ? "market" : "limit", is_buy ? "buy" : "sell", in->quantity, in->price);
         if (is_can_rep) {
@@ -635,7 +825,76 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // the idea is do some quick validation on the stop order
     // let me sleep on this
-    
+
+    // cancelling an armed stop needs no snapshot. no reserve to return, and the heap
+    // entry left behind dies on the fire guards
+    if (is_cancel) {
+        Order* cancelled = (Order*)fl_get(orders, in->other_id);
+        if ((cancelled->status >> HAS_STOP_BIT) & 1) {
+            cancelled->quantity = 0;
+            schedule_response(sc, in->client_id, status, 0, exec_order_id, cancelled->stop_price, REASON_NONE);
+            return;
+        }
+    }
+
+    // canrep whose target is an armed stop: same tombstone cancel as above, so the
+    // replacement carries on below as a fresh order (plain, stop-only, or combined)
+    if (is_can_rep) {
+        Order* cancelled = (Order*)fl_get(orders, in->other_id);
+        if ((cancelled->status >> HAS_STOP_BIT) & 1) {
+            cancelled->quantity = 0;
+            in->status &= ~(1 << CAN_REP_BIT);
+            is_can_rep = 0;
+        }
+    }
+
+    // stop-only replacement of a book order: the slot has to stay a cancel op for the
+    // book walk to splice the old order out, so it demotes to a pure cancel and the stop
+    // half mints its own slot below, same as a combined order's would
+    u8 canrep_stop_leg = 0;
+    if (is_stop && is_can_rep && in->quantity == 0) {
+        in->status = (in->status & ~(1 << CAN_REP_BIT)) | (1 << CANCEL_BIT);
+        is_can_rep = 0;
+        is_cancel = 1;
+        canrep_stop_leg = 1;
+    }
+
+    // combined stop: the stop half moves to its own slot in canonical form - params in
+    // the primary fields - so the trigger can convert it in place later. the NOW half
+    // carries on below as a plain order
+    u32 stop_order_id = MAX_U32;
+    if (is_stop && (in->quantity > 0 || canrep_stop_leg)) {
+        Order seed = {};
+        seed.client_id = in->client_id;
+        seed.quantity = in->second_quantity;
+        seed.price = in->second_price;
+        seed.stop_price = in->stop_price;
+        seed.second_id = in->second_id; // a gtd expiry date rides along
+        seed.ns = in->ns;
+        seed.status = (1 << HAS_STOP_BIT)
+            | (in->second_direction ? (1 << BUY_DIRECTION_BIT) : 0)
+            | (in->status & ((1 << STOP_LIMIT_BIT) | (1 << DAY_BIT) | (1 << GTD_BIT)));
+        stop_order_id = fl_insert(orders, &seed);
+        in = (Order*)fl_get(orders, exec_order_id); // fl_insert may have moved the pool
+        in->status &= ~((1 << HAS_STOP_BIT) | (1 << STOP_LIMIT_BIT));
+        stop_rest(sc, stop_order_id);
+    }
+
+    // stop-only: no NOW half, so normalize into this same slot (the client keeps one id),
+    // rest it, ack, and get out - the book is never touched
+    if (is_stop && in->quantity == 0 && !canrep_stop_leg) {
+        in->quantity = in->second_quantity;
+        in->price = in->second_price;
+        if (in->second_direction)
+            in->status |= (1 << BUY_DIRECTION_BIT);
+        else
+            in->status &= ~(1 << BUY_DIRECTION_BIT);
+
+        stop_rest(sc, exec_order_id);
+        schedule_response(sc, in->client_id, status, 0, exec_order_id, in->stop_price, REASON_NONE);
+        return;
+    }
+
 
     // mbo_dump + used to create next snapshot
     // us, plus at least the one who sent request?
@@ -860,8 +1119,8 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     }
 
     // the block above retired the bid's replaced order; do the same for the ask leg.
-    // ask_is_cr is the replace case, is_cancel the pull-both-quotes case
-    if (is_pair && (ask_is_cr | is_cancel)) {
+    // ask_is_can_rep is the replace case, is_cancel the pull-both-quotes case
+    if (is_pair && (ask_is_can_rep | is_cancel)) {
         Order* old_ask = (Order*)fl_get(orders, ask_in->other_id);
 
         // normally a sell, but dont assume - cancel_precheck only proved it was ours and resting
@@ -906,17 +1165,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
                 printf("MARGIN CALL client #%u [$%lld/%lldsh] mark $%u\n", ci, mc->cash, mc->shares, sc->mark);
         }
 
-        //if last_trade_price >= pq_peek(asks)
-            // pop asks as market ordersinto the convert holder
-        //if last_trade_price <= pq_peek(bids)
-            // pop bids as market orders into the convert holder
-        // yeah we need a new stop order type
-
-        // price is priority, then the rest of the 32 bits can be like stop id.
-        // lets use an FL for stops
-
-
-        // their validation will be handled later
+        // pop triggered stops into the convert holder; exec_end sees it non-empty and
+        // schedules the drain back into the sw queue, same trip the iceberg slices take
+        check_stops(sc, (u16)last_trade_price);
     }
 
 
@@ -927,6 +1178,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if (is_pair)
         // both legs, one delivery, each with its own filled quantity
         schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, ask_order_id, ask_in->price, (before_ask_quantity - ask_in->quantity), rej_reason);
+    else if (is_stop)
+        // combined stop: the NOW half's result plus the resting leg's id in one delivery
+        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, stop_order_id, in->stop_price, 0, rej_reason);
     else
         schedule_response(sc, in->client_id, status, filled, exec_order_id, in->price, rej_reason);
 
@@ -951,6 +1205,23 @@ void collect_expire(ServerContext* sc, u32 order_id, u8 tif_bit, u32 date) {
         return;
 
     if (tif_bit == GTD_BIT && o->second_id != date)
+        return;
+
+    // still armed: expire it out of its trigger heap. nothing was reserved and nothing is
+    // in the book, so the response + tombstone is the whole job. the heap entry left
+    // behind dies on the fire guards
+    if ((o->status >> HAS_STOP_BIT) & 1) {
+        schedule_response(sc, o->client_id, (1 << REJECT_BIT) | (1 << CANCEL_BIT) | (1 << HAS_STOP_BIT), 0, order_id, o->stop_price, CXL_SESSION_CLOSE);
+        o->status |= (1 << REJECT_BIT);
+        o->quantity = 0;
+        return;
+    }
+
+    // a stop that fired at the last second: converted, but still riding the sw queue, so
+    // there's no reserve to give back and nothing to prune. leave it alone - it bounces
+    // off the closed-market gate by itself, and touching it here would respond twice.
+    // resting orders are always in the book, so this is the only order this misses
+    if (ob_queue_position(o->price, order_id, bs_get_no_ref(sc->mbo_bs, sc->last_mbo)) == MAX_U32)
         return;
 
     ClientSettings* cs = sc->client_settings + o->client_id;
@@ -1184,6 +1455,8 @@ void server_free(ServerContext* sc) {
     cb_free(sc->expire_cb);
     pq_free(sc->gtd);
     pq_free(sc->price_pq);
+    pq_free(sc->buy_stops);
+    xpq_free(sc->sell_stops);
 
     free(sc->rand);
 
