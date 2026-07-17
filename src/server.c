@@ -596,6 +596,47 @@ void stop_fire(ServerContext* sc, u64 entry, u8 is_buy, u32 batch_start) {
     stop_batch_insert(sc, batch_start, order_id);
 }
 
+// one side of an oco pair is done - pull the other with a synthetic cancel through the
+// convert path. the ns guard blocks recycled ids: a legit partner was placed at or before
+// the oco order (its id had to exist to be pointed at, and a combined bracket stamps both
+// halves at once), so a newer stamp is a stranger living in the freed slot
+void oco_pull(ServerContext* sc, u32 done_id) {
+    Order* done = (Order*)fl_get(sc->orders, done_id);
+    u32 partner_id = done->other_id;
+    Order* partner = (Order*)fl_get(sc->orders, partner_id);
+
+    if (partner->quantity == 0 || ((partner->status >> REJECT_BIT) & 1))
+        return;
+
+    if (partner->ns > done->ns)
+        return;
+
+    Order cxl = {0};
+    cxl.client_id = done->client_id;
+    // control: the server minted this, so the ack hands the slot straight back
+    cxl.status = (1 << CANCEL_BIT) | (1 << CONTROL_BIT);
+    cxl.other_id = partner_id;
+    u32 cxl_id = fl_insert(sc->orders, &cxl);
+    cb_queue(sc->convert_holder, &cxl_id);
+
+    printf("OCO #%u done, pulling #%u\n", done_id, partner_id);
+}
+
+// fired oco stops pull their partners at the hit, not the fill - walk the freshly fired
+// group and queue a cancel for each linked order, behind the group itself. the bit comes
+// off so the fill hook doesn't pull a second time when the conversion executes
+void oco_sweep(ServerContext* sc, u32 batch_start) {
+    u32 batch_end = cb_count(sc->convert_holder);
+    for (u32 i = batch_start; i < batch_end; i++) {
+        u32 fired_id = *(u32*)cb_at(sc->convert_holder, i);
+        Order* fired = (Order*)fl_get(sc->orders, fired_id);
+        if ((fired->status >> OCO_BIT) & 1) {
+            fired->status &= ~(1 << OCO_BIT);
+            oco_pull(sc, fired_id);
+        }
+    }
+}
+
 // a print at `last` fires every buy stop with trigger at or below it, and every sell stop
 // at or above it. one price group at a time, each landing in convert_holder in arrival
 // order - within a price the heap gives id order, and ids recycle, so it means nothing
@@ -877,6 +918,16 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         stop_order_id = fl_insert(orders, &seed);
         in = (Order*)fl_get(orders, exec_order_id); // fl_insert may have moved the pool
         in->status &= ~((1 << HAS_STOP_BIT) | (1 << STOP_LIMIT_BIT));
+
+        // oco bracket: wire the now half and its leg to each other so whichever completes
+        // first pulls the other. no now half (canrep_stop_leg) means nothing to bracket
+        if (((in->status >> OCO_BIT) & 1) && in->quantity > 0) {
+            in->other_id = stop_order_id;
+            Order* leg = (Order*)fl_get(orders, stop_order_id);
+            leg->status |= (1 << OCO_BIT);
+            leg->other_id = exec_order_id;
+        }
+
         stop_rest(sc, stop_order_id);
     }
 
@@ -1031,6 +1082,13 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             schedule_response(sc, maker, fstatus, q, fill->order_id, order->price, REASON_NONE);
         }
 
+        // a resting oco order that just fully filled pulls its stop partner
+        order = (Order*)fl_get(orders, fill->order_id);
+        if (order->quantity == 0 && ((order->status >> OCO_BIT) & 1)) {
+            order->status &= ~(1 << OCO_BIT);
+            oco_pull(sc, fill->order_id);
+            taker = (Order*)fl_get(orders, taker_id); // oco_pull's fl_insert may move the pool
+        }
     }
 
     // an iceberg replenish above may have moved the pool, so in/ask_in could be stale
@@ -1082,6 +1140,13 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             cb_queue(sc->day_orders, &exec_order_id);
         else if ((in->status >> GTD_BIT) & 1)
             pq_push(sc->gtd, ((u64)in->second_id << 32) | exec_order_id);
+    }
+
+    // the now half of a bracket that fully filled on arrival (as taker) pulls its stop leg
+    if (((in->status >> OCO_BIT) & 1) && in->quantity == 0 && !is_cancel) {
+        in->status &= ~(1 << OCO_BIT);
+        oco_pull(sc, exec_order_id);
+        in = (Order*)fl_get(orders, exec_order_id); // oco_pull's fl_insert may move the pool
     }
 
     // the pair's bid reserve is handled above (is_buy); add the ask leg's share reserve.
@@ -1167,7 +1232,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
         // pop triggered stops into the convert holder; exec_end sees it non-empty and
         // schedules the drain back into the sw queue, same trip the iceberg slices take
+        u32 fired_start = cb_count(sc->convert_holder);
         check_stops(sc, (u16)last_trade_price);
+        // a fired oco stop pulls its resting partner right here at the trigger
+        oco_sweep(sc, fired_start);
     }
 
 
