@@ -1059,6 +1059,7 @@ void server_auction(ServerContext* sc) {
     // it re-reserves and rests (or bounces off the closed gate at a close). a stranded market
     // order re-prices to the clearing price - a working price, so it rests as bounded interest
     // instead of eating the book at any price. filled and cancelled orders (quantity 0) fall out
+    u8 queued = 0; // did we actually add residual? convert_holder may already hold a fired stop
     while (!cb_is_empty(sc->auction_arrivals)) {
         u32 id = *(u32*)cb_deque(sc->auction_arrivals);
         Order* o = (Order*)fl_get(sc->orders, id);
@@ -1079,11 +1080,12 @@ void server_auction(ServerContext* sc) {
             o->status &= ~(1 << IS_MARKET_BIT);
         }
         cb_queue(sc->convert_holder, &id);
+        queued = 1;
     }
 
-    // cap the residual batch with a sentinel and schedule the drain into the sw queue, same as
-    // the continuous path. the caller flips auctioning off first, so this lands as normal orders
-    if (!cb_is_empty(sc->convert_holder)) {
+    // cap our residual batch with a sentinel and schedule the drain, same as the continuous path.
+    // only if we actually queued - convert_holder can already hold an unrelated fired-stop batch
+    if (queued) {
         u32 sentinel = CONVERT_SENTINEL_VALUE;
         cb_queue(sc->convert_holder, &sentinel);
         sch_schedule(sc->sch, build_event(SERVER_TYPE, EXEC_TO_SW_ID), 100);
