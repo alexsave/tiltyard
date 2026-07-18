@@ -193,9 +193,12 @@ uint64_t sch_pop(SCH* sch) {
             uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
             uint64_t priority = seconds & P_MASK;
 
-
-            rand_next(sch->rand);
-            priority += (((*sch->rand) & MAX_U32) >> 3);
+            // the opening bell and close ring on their exact second; everything else keeps the
+            // spreading jitter
+            if (!(((pop >> PARAM_BITS) & T_MASK) == CONTROL_TYPE && (pop & PARAM_MASK) >= CONTROL_PARAM_CLOSE)) {
+                rand_next(sch->rand);
+                priority += (((*sch->rand) & MAX_U32) >> 3);
+            }
 
             pq_push(sch->buckets[bucket], (priority << E_BITS) | (pop & E_MASK));
 
