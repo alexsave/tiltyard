@@ -39,6 +39,9 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // heap keyed by its price (reused field), and the client keeps its id to cancel it
 // a market-data broadcast, not the client's own order: response.tier selects the source and
 // snapshot_id is the id/offset into it (mbo, mbp, trade, candle, ...)
+// acks that an add was accepted into the call auction: parked, not matched or rested, and it
+// crosses at the single clearing price when the auction ends
+static const u8 AUCTION_BIT = 21;
 static const u8 BROADCAST_BIT = 20;
 static const u8 WAKE_BIT = 19;
 static const u8 GTD_BIT = 18;

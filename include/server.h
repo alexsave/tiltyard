@@ -73,6 +73,16 @@ typedef struct ServerContext {
     PQ* wake_above;
     XPQ* wake_below;
 
+    // call auction: while auctioning, orders park instead of matching. limits into the two
+    // price min-heaps (the demand/supply curves), markets into their own arrival queues (base
+    // demand/supply, filled first), everything into auction_arrivals for the remainder drain
+    u8 auctioning;
+    PQ* auction_bids;
+    PQ* auction_asks;
+    CB* auction_market_bids;
+    CB* auction_market_asks;
+    CB* auction_arrivals;
+
     u64* rand;
 
     // mirror of MBO

@@ -60,6 +60,13 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
     sc->wake_above = pq_init(); // both (price << 32 | id), no ordering within a price
     sc->wake_below = xpq_init();
+
+    sc->auctioning = 0;
+    sc->auction_bids = pq_init(); // both limit-only, (price << 32 | id)
+    sc->auction_asks = pq_init();
+    sc->auction_market_bids = cb_init(sizeof(u32)); // market-only, arrival order
+    sc->auction_market_asks = cb_init(sizeof(u32));
+    sc->auction_arrivals = cb_init(sizeof(u32)); // all auction orders, arrival order
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
@@ -812,10 +819,59 @@ void check_wakes(ServerContext* sc, u16 last) {
     }
 }
 
+// all order handling during a call auction, kept apart from the continuous path. an add parks
+// in auction_arrivals (arrival order); the split into bid/ask/market queues happens at the cross
+void server_auction_order(ServerContext* sc, u32 order_id) {
+    Order* in = (Order*)fl_get(sc->orders, order_id);
+    u32 status = in->status;
+
+    // a pure cancel tombstones its target so the cross drops it and reconciles book/reserves
+    if (status & (1 << CANCEL_BIT)) {
+        Order* tgt = (Order*)fl_get(sc->orders, in->other_id);
+        u8 reason = REASON_NONE;
+        if (tgt->client_id != in->client_id)
+            reason = REJ_NOT_YOUR_ORDER;
+        else if (tgt->quantity == 0 || ((tgt->status >> REJECT_BIT) & 1))
+            reason = REJ_ORDER_ALREADY_DONE;
+        if (reason) {
+            in->status |= (1 << REJECT_BIT);
+            schedule_response(sc, in->client_id, (1 << CANCEL_BIT) | (1 << REJECT_BIT), 0, order_id, 0, reason);
+            return;
+        }
+        tgt->quantity = 0;
+        tgt->status |= (1 << REJECT_BIT);
+        schedule_response(sc, in->client_id, (1 << CANCEL_BIT), 0, order_id, 0, REASON_NONE);
+        return;
+    }
+
+    // only plain limit/market adds may park - a stop/wake/pair/iceberg/canrep/oco is rejected.
+    // a market needs no price, a limit does; both need a quantity
+    u32 disallowed_mask = (1 << HAS_STOP_BIT) | (1 << WAKE_BIT)
+        | (1 << ASK_BID_PAIR_BIT) | (1 << ICEBERG_BIT) | (1 << CAN_REP_BIT) | (1 << OCO_BIT);
+    u8 is_market = (status >> IS_MARKET_BIT) & 1;
+    u8 disallowed = (status & disallowed_mask) != 0;
+    if (disallowed || in->quantity == 0 || (!is_market && in->price == 0)) {
+        in->status |= (1 << REJECT_BIT);
+        u8 why = disallowed ? REJ_BAD_QUALIFIER : (in->quantity == 0 ? REJ_INVALID_QUANTITY : REJ_INVALID_PRICE);
+        schedule_response(sc, in->client_id, (1 << REJECT_BIT), 0, order_id, 0, why);
+        return;
+    }
+
+    in->ns = sch_now_ns(sc->sch); // arrival stamp, breaks ties at the marginal clearing price
+    cb_queue(sc->auction_arrivals, &order_id);
+    schedule_response(sc, in->client_id, (1 << AUCTION_BIT), 0, order_id, in->price, REASON_NONE);
+}
+
 // much better
 // the big driver of all market book stuff
 // this mostly takes care of scheduling, then passes it off to server_order
 void server_order(ServerContext* sc, u32 exec_order_id) {
+
+    // during a call auction, orders don't match - the auction handler owns them entirely
+    if (sc->auctioning) {
+        server_auction_order(sc, exec_order_id);
+        return;
+    }
 
     // maybe I rename at least the struct names
     //u32 last_mbo = sc->last_mbo;
@@ -1739,6 +1795,11 @@ void server_free(ServerContext* sc) {
     xpq_free(sc->sell_stops);
     pq_free(sc->wake_above);
     xpq_free(sc->wake_below);
+    pq_free(sc->auction_bids);
+    pq_free(sc->auction_asks);
+    cb_free(sc->auction_market_bids);
+    cb_free(sc->auction_market_asks);
+    cb_free(sc->auction_arrivals);
 
     free(sc->rand);
 
