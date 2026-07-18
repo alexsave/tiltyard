@@ -141,10 +141,18 @@ int main(int argc, char* argv[]){
                 // so this will not come with any knowledge of snapshot
                 // and this is not in response to an order id 
                 // this just wakes them up
-                context->mbo_snapshot = 0;
+                context->data_snapshot = 0;
+            } else if ((status >> BROADCAST_BIT) & 1) {
+                // market-data push: response.tier picks the source, snapshot_id is the id/offset.
+                // blob tiers resolve with bs_get (move-safe via metadata), buffers with cb_at
+                if (response.tier <= TIER_MBP1)
+                    context->data_snapshot = bs_get((BS*)sc->tier_source[response.tier], snapshot_id);
+                else
+                    context->data_snapshot = cb_at((CB*)sc->tier_source[response.tier], snapshot_id);
+                context->order_id = response.order_id;
             } else {
                 // for some clients, they need to get the MBP. But that's later
-                context->mbo_snapshot = bs_get(mbo_bs, snapshot_id);
+                context->data_snapshot = bs_get(mbo_bs, snapshot_id);
                 context->order_id = response.order_id;
                 // they cant use it anyways
                 //if (response.order_id != MAX_U32)
