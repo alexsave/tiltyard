@@ -34,7 +34,7 @@ u8 co_on_snapshot(CO* co, Context* ctx){
         return 1;
     }
 
-    if (ctx->mbo_snapshot == 0) {
+    if (ctx->data_snapshot == 0) {
         // it's a ping bit, just try to connect to sw
         // idk
         ctx->next_order_ptr->status |= (1 << PING_BIT);
@@ -63,7 +63,7 @@ u8 co_on_snapshot(CO* co, Context* ctx){
 
     
 
-    MBO * mbo = (MBO*)ctx->mbo_snapshot;
+    MBO * mbo = (MBO*)ctx->data_snapshot;
 
 
     // let make sure we have both bid and ask

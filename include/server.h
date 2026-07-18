@@ -99,6 +99,10 @@ typedef struct ServerContext {
     u32* stream_roster;
     u32* tier_offset;
 
+    // TIER_COUNT entries mapping a tier to its data structure: a BS* for blob tiers (0-3),
+    // a CB* for the trade/candle buffers (4-8). a broadcast response's u8 tier indexes this.
+    void** tier_source;
+
 } ServerContext;
 
 

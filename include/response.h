@@ -40,11 +40,11 @@ typedef struct Response {
     // top bits of snapshot_id will actually have some interesting things in them
     // hopefully 1 millino snapshots is enough
 
-    u32 snapshot_id;// also boot or socket, or a candle offset when BROADCAST_BIT is set
+    u32 snapshot_id;// blob id for a blob broadcast, buffer offset for a trade/candle broadcast
 
-    // BROADCAST_BIT candle push: points at the tier's candle CB (the CB struct is stable even
-    // when its buffer grows), and snapshot_id is the offset into it - resolved with cb_at
-    void* candle_tier;
+    // a broadcast's tier - indexes sc->tier_source to the BS* (blob, bs_get) or CB* (buffer,
+    // cb_at) it came from, resolved at delivery so a store that moves mid-flight stays safe
+    u8 tier;
 
     // all about the order this response is about
     u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast
