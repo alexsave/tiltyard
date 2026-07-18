@@ -67,6 +67,8 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->auction_market_bids = cb_init(sizeof(u32)); // market-only, arrival order
     sc->auction_market_asks = cb_init(sizeof(u32));
     sc->auction_arrivals = cb_init(sizeof(u32)); // all auction orders, arrival order
+    sc->auction_bid_sorted = cb_init(sizeof(u64)); // scratch: heaps popped ascending for the cross
+    sc->auction_ask_sorted = cb_init(sizeof(u64));
     sc->sw_queue = cb_init(sizeof(u32));
     sc->hw_queue = cb_init(sizeof(u32));
     sc->convert_holder = cb_init(sizeof(u32));
@@ -819,6 +821,23 @@ void check_wakes(ServerContext* sc, u16 last) {
     }
 }
 
+// reserve a parked order's buying power so a client can't park more than it can fund: a buy
+// holds cash at its price (or the mark, for a market order), a sell holds shares
+void auction_hold(ClientSettings* cs, Order* o, u16 mark) {
+    if ((o->status >> BUY_DIRECTION_BIT) & 1)
+        cs->reserved_cash += (u32)o->quantity * (((o->status >> IS_MARKET_BIT) & 1) ? mark : o->price);
+    else
+        cs->reserved_shares += o->quantity;
+}
+
+// give back what auction_hold reserved (on cancel, or at the cross before settling)
+void auction_release(ClientSettings* cs, Order* o, u16 mark) {
+    if ((o->status >> BUY_DIRECTION_BIT) & 1)
+        cs->reserved_cash -= (u32)o->quantity * (((o->status >> IS_MARKET_BIT) & 1) ? mark : o->price);
+    else
+        cs->reserved_shares -= o->quantity;
+}
+
 // all order handling during a call auction, kept apart from the continuous path. an add parks
 // in auction_arrivals (arrival order); the split into bid/ask/market queues happens at the cross
 void server_auction_order(ServerContext* sc, u32 order_id) {
@@ -838,6 +857,7 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
             schedule_response(sc, in->client_id, (1 << CANCEL_BIT) | (1 << REJECT_BIT), 0, order_id, 0, reason);
             return;
         }
+        auction_release(sc->client_settings + tgt->client_id, tgt, sc->mark); // give the reserve back
         tgt->quantity = 0;
         tgt->status |= (1 << REJECT_BIT);
         schedule_response(sc, in->client_id, (1 << CANCEL_BIT), 0, order_id, 0, REASON_NONE);
@@ -857,9 +877,210 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
         return;
     }
 
+    // check and reserve buying power like a resting order would (no shorting/margin in the
+    // auction for now). a buy needs cash at its price or the mark, a sell needs the shares
+    ClientSettings* cs = sc->client_settings + in->client_id;
+    if (status & (1 << BUY_DIRECTION_BIT)) {
+        u32 cost = (u32)in->quantity * (is_market ? sc->mark : in->price);
+        if (cost > cs->cash - cs->reserved_cash) {
+            in->status |= (1 << REJECT_BIT);
+            schedule_response(sc, in->client_id, (1 << REJECT_BIT), 0, order_id, 0, REJ_NO_BUYING_POWER);
+            return;
+        }
+    } else if (in->quantity > cs->shares - cs->reserved_shares) {
+        in->status |= (1 << REJECT_BIT);
+        schedule_response(sc, in->client_id, (1 << REJECT_BIT), 0, order_id, 0, REJ_NO_SHARES);
+        return;
+    }
+    auction_hold(cs, in, sc->mark);
+
     in->ns = sch_now_ns(sc->sch); // arrival stamp, breaks ties at the marginal clearing price
     cb_queue(sc->auction_arrivals, &order_id);
     schedule_response(sc, in->client_id, (1 << AUCTION_BIT), 0, order_id, in->price, REASON_NONE);
+}
+
+// fill up to `shares` on one side at the clearing price, market orders first (fifo). the queue
+// holds only live orders (cancelled ones, quantity 0, were filtered when the arrivals were
+// split), so no guard here. fills settle against the clearing price - the auction is a pooled
+// cross, so buyers and sellers each net `matched` shares and cash balances without pairing
+void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
+    CB* market = is_buy ? sc->auction_market_bids : sc->auction_market_asks;
+    while (shares > 0 && !cb_is_empty(market)) {
+        u32 id = *(u32*)cb_deque(market);
+        Order* o = (Order*)fl_get(sc->orders, id);
+        u32 q = o->quantity < shares ? o->quantity : shares;
+        o->quantity -= q;
+
+        ClientSettings* cs = sc->client_settings + o->client_id;
+        if (is_buy) {
+            cs->cash -= (i64)q * clearing;
+            cs->shares += q;
+        } else {
+            cs->cash += (i64)q * clearing;
+            cs->shares -= q;
+        }
+        shares -= q;
+    }
+
+    if (shares == 0) // markets took it all, no limit fills to work out
+        return;
+
+    // then limits, best price first: bids from the top of the ascending buffer down, asks from
+    // the bottom up. stop at the first non-crossing price - those orders are the remainder
+    CB* sorted = is_buy ? sc->auction_bid_sorted : sc->auction_ask_sorted;
+    u32 cnt = cb_count(sorted);
+    u64* buf = (u64*)sorted->buffer;
+    for (u32 k = 0; k < cnt && shares > 0; k++) {
+        u64 entry = is_buy ? buf[cnt - 1 - k] : buf[k];
+        u16 price = (u16)(entry >> 32);
+        if (is_buy ? price < clearing : price > clearing)
+            break;
+
+        Order* o = (Order*)fl_get(sc->orders, (u32)(entry & MAX_U32));
+        u32 q = o->quantity < shares ? o->quantity : shares;
+        o->quantity -= q;
+
+        ClientSettings* cs = sc->client_settings + o->client_id;
+        if (is_buy) {
+            cs->cash -= (i64)q * clearing;
+            cs->shares += q;
+        } else {
+            cs->cash += (i64)q * clearing;
+            cs->shares -= q;
+        }
+        shares -= q;
+    }
+}
+
+// run the call auction cross: find the single clearing price, fill markets first then limits,
+// spill the remainder (limits rest, markets cancel)
+void server_auction(ServerContext* sc) {
+    // sort the parkers: limits into their side's price heap, markets into their side's fifo
+    // (base demand/supply). arrivals stays intact for the remainder drain, read flat (no wrap)
+    u32 base_demand = 0;
+    u32 base_supply = 0;
+    u32 n = cb_count(sc->auction_arrivals);
+    u32* arrivals = (u32*)sc->auction_arrivals->buffer;
+    for (u32 i = 0; i < n; i++) {
+        u32 id = arrivals[i];
+        Order* o = (Order*)fl_get(sc->orders, id);
+        if (o->quantity == 0)
+            continue;
+
+        // give the park reserve back: fills settle cash directly, the remainder re-reserves
+        // when it rests, and cancelled orders already released above
+        auction_release(sc->client_settings + o->client_id, o, sc->mark);
+
+        u8 is_buy = (o->status >> BUY_DIRECTION_BIT) & 1;
+        if ((o->status >> IS_MARKET_BIT) & 1) {
+            cb_queue(is_buy ? sc->auction_market_bids : sc->auction_market_asks, &id);
+            if (is_buy)
+                base_demand += o->quantity;
+            else
+                base_supply += o->quantity;
+        } else {
+            u64 entry = ((u64)o->price << 32) | id;
+            pq_push(is_buy ? sc->auction_bids : sc->auction_asks, entry);
+        }
+    }
+
+    // pop the limit heaps into the ascending scratch buffers (reused for the walk and the fill)
+    u32 nb = sc->auction_bids->current - 1;
+    u32 na = sc->auction_asks->current - 1;
+    u32 total_demand = 0; // summed limit-bid shares (the market side is base_demand)
+    for (u32 i = 0; i < nb; i++) {
+        u64 e = pq_pop(sc->auction_bids);
+        cb_queue(sc->auction_bid_sorted, &e);
+        total_demand += ((Order*)fl_get(sc->orders, (u32)(e & MAX_U32)))->quantity;
+    }
+    for (u32 i = 0; i < na; i++) {
+        u64 e = pq_pop(sc->auction_asks);
+        cb_queue(sc->auction_ask_sorted, &e);
+    }
+
+    // walk ascending: supply gathers asks at or below the price, demand sheds bids as they fall
+    // under it. matched is min(demand, supply), and the price where it peaks is the clearing
+    // price. market orders have no price, so they ride under the whole curve as base demand/supply
+    u64* bid_buf = (u64*)sc->auction_bid_sorted->buffer;
+    u64* ask_buf = (u64*)sc->auction_ask_sorted->buffer;
+    u32 bids_at_or_above = total_demand;
+    u32 asks_at_or_below = 0;
+    u32 matched = 0;
+    u16 clearing = sc->mark;
+    u32 bid_i = 0, ask_i = 0;
+    while (bid_i < nb || ask_i < na) {
+        u16 bid_price = bid_i < nb ? (u16)(bid_buf[bid_i] >> 32) : MAX_U16;
+        u16 ask_price = ask_i < na ? (u16)(ask_buf[ask_i] >> 32) : MAX_U16;
+        u16 price = bid_price < ask_price ? bid_price : ask_price;
+
+        while (ask_i < na && (u16)(ask_buf[ask_i] >> 32) == price)
+            asks_at_or_below += ((Order*)fl_get(sc->orders, (u32)(ask_buf[ask_i++] & MAX_U32)))->quantity;
+        u32 bids_here = 0;
+        while (bid_i < nb && (u16)(bid_buf[bid_i] >> 32) == price)
+            bids_here += ((Order*)fl_get(sc->orders, (u32)(bid_buf[bid_i++] & MAX_U32)))->quantity;
+
+        u32 demand = base_demand + bids_at_or_above;
+        u32 supply = base_supply + asks_at_or_below;
+        u32 crossed = demand < supply ? demand : supply;
+        if (crossed > matched) {
+            matched = crossed;
+            clearing = price;
+        }
+        // stepping above this price, its bids leave demand
+        bids_at_or_above -= bids_here;
+    }
+
+    // no limit crossed, but two market sides can still trade - clear at the reference price
+    if (matched == 0 && base_demand > 0 && base_supply > 0) {
+        clearing = sc->mark;
+        matched = base_demand < base_supply ? base_demand : base_supply;
+    }
+
+    printf("AUCTION cross: clearing $%u, matched %u\n", clearing, matched);
+
+    // fill matched shares on each side at the clearing price: the lighter side clears fully, the
+    // heavier side leaves its excess for the remainder drain
+    auction_fill_side(sc, matched, clearing, 1);
+    auction_fill_side(sc, matched, clearing, 0);
+
+    cb_clear(sc->auction_bid_sorted);
+    cb_clear(sc->auction_ask_sorted);
+    cb_clear(sc->auction_market_bids);
+    cb_clear(sc->auction_market_asks);
+
+    // remainder, in arrival order: hand it back to continuous via the convert -> sw path, where
+    // it re-reserves and rests (or bounces off the closed gate at a close). a stranded market
+    // order re-prices to the clearing price - a working price, so it rests as bounded interest
+    // instead of eating the book at any price. filled and cancelled orders (quantity 0) fall out
+    while (!cb_is_empty(sc->auction_arrivals)) {
+        u32 id = *(u32*)cb_deque(sc->auction_arrivals);
+        Order* o = (Order*)fl_get(sc->orders, id);
+        if (o->quantity == 0)
+            continue;
+
+        // auction-only: cross or cancel, no continuous life to fall back to
+        if ((o->status >> AUCTION_ONLY_BIT) & 1) {
+            o->status |= (1 << REJECT_BIT);
+            o->quantity = 0;
+            schedule_response(sc, o->client_id, (1 << REJECT_BIT), 0, id, 0, CXL_IOC_UNFILLED);
+            continue;
+        }
+
+        // a stranded market re-prices to the clearing price so it rests as bounded interest
+        if ((o->status >> IS_MARKET_BIT) & 1) {
+            o->price = clearing;
+            o->status &= ~(1 << IS_MARKET_BIT);
+        }
+        cb_queue(sc->convert_holder, &id);
+    }
+
+    // cap the residual batch with a sentinel and schedule the drain into the sw queue, same as
+    // the continuous path. the caller flips auctioning off first, so this lands as normal orders
+    if (!cb_is_empty(sc->convert_holder)) {
+        u32 sentinel = CONVERT_SENTINEL_VALUE;
+        cb_queue(sc->convert_holder, &sentinel);
+        sch_schedule(sc->sch, build_event(SERVER_TYPE, EXEC_TO_SW_ID), 100);
+    }
 }
 
 // much better
@@ -1800,6 +2021,8 @@ void server_free(ServerContext* sc) {
     cb_free(sc->auction_market_bids);
     cb_free(sc->auction_market_asks);
     cb_free(sc->auction_arrivals);
+    cb_free(sc->auction_bid_sorted);
+    cb_free(sc->auction_ask_sorted);
 
     free(sc->rand);
 

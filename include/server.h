@@ -82,6 +82,10 @@ typedef struct ServerContext {
     CB* auction_market_bids;
     CB* auction_market_asks;
     CB* auction_arrivals;
+    // scratch: the heaps pop into these ascending price-sorted arrays (u64 entries), reused
+    // each auction for both the clearing walk and the fill
+    CB* auction_bid_sorted;
+    CB* auction_ask_sorted;
 
     u64* rand;
 
