@@ -959,6 +959,61 @@ void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
     }
 }
 
+// the resting book sits on one side of the clearing price, so at most one of these runs
+void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing) {
+    BS* mbo_bs = sc->mbo_bs;
+    FL* orders = sc->orders;
+    CB* fills = sc->fills;
+
+    // a synthetic limit-ioc at the clearing price eats exactly `shares` of book depth (never more
+    // than crosses), leaving a fresh mbo with those orders spliced out or reduced
+    Order taker = {0};
+    taker.price = clearing;
+    taker.quantity = shares;
+    taker.status = (1 << IOC_BIT) | (is_buy ? (1 << BUY_DIRECTION_BIT) : 0);
+    u32 taker_id = fl_insert(orders, &taker);
+
+    u32 prev_mbo = sc->last_mbo;
+    u32 old_size = mbo_bs->metadata[prev_mbo].size;
+    void* new_mbo_raw;
+    // consuming never grows the book
+    u32 next_mbo = bs_reserve(mbo_bs, old_size, 1, &new_mbo_raw);
+    // re-get: the reserve may have moved it
+    void* old_mbo_raw = bs_get_no_ref(mbo_bs, prev_mbo);
+
+    u32 new_size = ob_canrep(orders, taker_id, old_mbo_raw, new_mbo_raw, fills);
+    sc->last_mbo = next_mbo;
+    bs_resize(mbo_bs, new_size);
+
+    // each maker settles at the clearing price (not its resting price), gives its reserve back,
+    // and gets a fill notification just like a continuous maker would
+    while (!cb_is_empty(fills)) {
+        Fill* fill = (Fill*)cb_deque(fills);
+        Order* maker = (Order*)fl_get(orders, fill->order_id);
+        u32 q = fill->quantity_filled;
+        u8 partial = fill->partial;
+        u32 maker_client = maker->client_id;
+        ClientSettings* mcs = sc->client_settings + maker_client;
+        if ((maker->status >> BUY_DIRECTION_BIT) & 1) {
+            // book bid: gives back cash held at its price
+            mcs->reserved_cash -= q * maker->price;
+            mcs->cash -= (i64)q * clearing;
+            mcs->shares += q;
+        } else {
+            // book ask: gives back the reserved shares
+            mcs->reserved_shares -= q;
+            mcs->cash += (i64)q * clearing;
+            mcs->shares -= q;
+        }
+        maker->quantity -= q;
+
+        u32 fstatus = (1 << FILL_BIT) | (partial ? (1 << PARTIAL_FILL_BIT) : 0);
+        schedule_response(sc, maker_client, fstatus, q, fill->order_id, clearing, REASON_NONE);
+    }
+
+    fl_release(orders, taker_id);
+}
+
 // run the call auction cross: find the single clearing price, fill markets first then limits,
 // spill the remainder (limits rest, markets cancel)
 void server_auction(ServerContext* sc) {
@@ -992,15 +1047,15 @@ void server_auction(ServerContext* sc) {
     }
 
     // pop the limit heaps into the ascending scratch buffers (reused for the walk and the fill)
-    u32 nb = sc->auction_bids->current - 1;
-    u32 na = sc->auction_asks->current - 1;
+    u32 bid_count = sc->auction_bids->current - 1;
+    u32 ask_count = sc->auction_asks->current - 1;
     u32 total_demand = 0; // summed limit-bid shares (the market side is base_demand)
-    for (u32 i = 0; i < nb; i++) {
+    for (u32 i = 0; i < bid_count; i++) {
         u64 e = pq_pop(sc->auction_bids);
         cb_queue(sc->auction_bid_sorted, &e);
         total_demand += ((Order*)fl_get(sc->orders, (u32)(e & MAX_U32)))->quantity;
     }
-    for (u32 i = 0; i < na; i++) {
+    for (u32 i = 0; i < ask_count; i++) {
         u64 e = pq_pop(sc->auction_asks);
         cb_queue(sc->auction_ask_sorted, &e);
     }
@@ -1010,21 +1065,46 @@ void server_auction(ServerContext* sc) {
     // price. market orders have no price, so they ride under the whole curve as base demand/supply
     u64* bid_buf = (u64*)sc->auction_bid_sorted->buffer;
     u64* ask_buf = (u64*)sc->auction_ask_sorted->buffer;
-    u32 bids_at_or_above = total_demand;
+
+    // the resting book joins the curves: levels climb in price, bids are [0, hi_bid], asks
+    // above, and each level's aggregate quantity folds in without loading its orders
+    MBO* mbo = (MBO*)bs_get_no_ref(sc->mbo_bs, sc->last_mbo);
+    u16 hi_bid = mbo->hi_bid_index;
+    u32 book_bid_total = 0;
+    if (hi_bid != MAX_U16)
+        for (u16 i = 0; i <= hi_bid; i++)
+            book_bid_total += mbo->levels[i].quantity;
+
+    u32 bids_at_or_above = total_demand + book_bid_total;
     u32 asks_at_or_below = 0;
     u32 matched = 0;
     u16 clearing = sc->mark;
     u32 bid_i = 0, ask_i = 0;
-    while (bid_i < nb || ask_i < na) {
-        u16 bid_price = bid_i < nb ? (u16)(bid_buf[bid_i] >> 32) : MAX_U16;
-        u16 ask_price = ask_i < na ? (u16)(ask_buf[ask_i] >> 32) : MAX_U16;
-        u16 price = bid_price < ask_price ? bid_price : ask_price;
+    u16 ask_start = hi_bid == MAX_U16 ? 0 : hi_bid + 1; // book ask levels are [ask_start, count)
+    u16 book_bid_i = 0;
+    u16 book_ask_i = ask_start;
+    while (bid_i < bid_count || ask_i < ask_count || book_bid_i < ask_start || book_ask_i < mbo->level_count) {
+        // lowest price still unprocessed across the four ascending sources
+        u16 price = MAX_U16;
+        if (bid_i < bid_count && (u16)(bid_buf[bid_i] >> 32) < price)
+            price = (u16)(bid_buf[bid_i] >> 32);
+        if (ask_i < ask_count && (u16)(ask_buf[ask_i] >> 32) < price)
+            price = (u16)(ask_buf[ask_i] >> 32);
+        if (book_bid_i < ask_start && mbo->levels[book_bid_i].price < price)
+            price = mbo->levels[book_bid_i].price;
+        if (book_ask_i < mbo->level_count && mbo->levels[book_ask_i].price < price)
+            price = mbo->levels[book_ask_i].price;
 
-        while (ask_i < na && (u16)(ask_buf[ask_i] >> 32) == price)
+        while (ask_i < ask_count && (u16)(ask_buf[ask_i] >> 32) == price)
             asks_at_or_below += ((Order*)fl_get(sc->orders, (u32)(ask_buf[ask_i++] & MAX_U32)))->quantity;
+        while (book_ask_i < mbo->level_count && mbo->levels[book_ask_i].price == price)
+            asks_at_or_below += mbo->levels[book_ask_i++].quantity;
+
         u32 bids_here = 0;
-        while (bid_i < nb && (u16)(bid_buf[bid_i] >> 32) == price)
+        while (bid_i < bid_count && (u16)(bid_buf[bid_i] >> 32) == price)
             bids_here += ((Order*)fl_get(sc->orders, (u32)(bid_buf[bid_i++] & MAX_U32)))->quantity;
+        while (book_bid_i < ask_start && mbo->levels[book_bid_i].price == price)
+            bids_here += mbo->levels[book_bid_i++].quantity;
 
         u32 demand = base_demand + bids_at_or_above;
         u32 supply = base_supply + asks_at_or_below;
@@ -1045,10 +1125,27 @@ void server_auction(ServerContext* sc) {
 
     printf("AUCTION cross: clearing $%u, matched %u\n", clearing, matched);
 
-    // fill matched shares on each side at the clearing price: the lighter side clears fully, the
-    // heavier side leaves its excess for the remainder drain
-    auction_fill_side(sc, matched, clearing, 1);
-    auction_fill_side(sc, matched, clearing, 0);
+    // the book sits on one side of the clearing price (it can't self-cross), so at most one of
+    // these is nonzero. that side of the book is consumed first, ahead of the auction arrivals
+    u32 book_bids_ge = 0, book_asks_le = 0;
+    for (u16 i = 0; i < ask_start; i++)
+        if (mbo->levels[i].price >= clearing)
+            book_bids_ge += mbo->levels[i].quantity;
+    for (u16 i = ask_start; i < mbo->level_count; i++)
+        if (mbo->levels[i].price <= clearing)
+            book_asks_le += mbo->levels[i].quantity;
+    u32 book_bid_fill = book_bids_ge < matched ? book_bids_ge : matched;
+    u32 book_ask_fill = book_asks_le < matched ? book_asks_le : matched;
+
+    if (book_bid_fill > 0)
+        auction_consume_book(sc, 0, book_bid_fill, clearing); // a market sell eats book bids
+    if (book_ask_fill > 0)
+        auction_consume_book(sc, 1, book_ask_fill, clearing); // a market buy eats book asks
+
+    // the auction arrivals fill the rest of matched at the clearing price - the book already
+    // took its share of its side, so subtract it there. the lighter side clears fully
+    auction_fill_side(sc, matched - book_bid_fill, clearing, 1);
+    auction_fill_side(sc, matched - book_ask_fill, clearing, 0);
 
     cb_clear(sc->auction_bid_sorted);
     cb_clear(sc->auction_ask_sorted);
