@@ -43,13 +43,14 @@ static const u64 CONTROL_TYPE = 3;
 // yes i know that these go from the top while the special packets go from teh bototm
 // honestly special packets should probably go from the top too.
 // lets see if fl can quickly accomodate this
-static const u32 CONTROL_PARAM_KILL = MAX_PARAM - 0;
-static const u32 CONTROL_PARAM_EOM = MAX_PARAM - 1;
-static const u32 CONTROL_PARAM_EOD = MAX_PARAM - 2;
-static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 3;
-static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 4;
-static const u32 CONTROL_PARAM_OPEN = MAX_PARAM - 5;
-static const u32 CONTROL_PARAM_CLOSE = MAX_PARAM - 6;
+// open and close are kept the two highest so the jitter-skip in sch.c is a single >= CLOSE
+static const u32 CONTROL_PARAM_OPEN = MAX_PARAM - 0;
+static const u32 CONTROL_PARAM_CLOSE = MAX_PARAM - 1;
+static const u32 CONTROL_PARAM_KILL = MAX_PARAM - 2;
+static const u32 CONTROL_PARAM_EOM = MAX_PARAM - 3;
+static const u32 CONTROL_PARAM_EOD = MAX_PARAM - 4;
+static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 5;
+static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 6;
 // fires once a second while the market is open to finalize/stream closed candles
 static const u32 CONTROL_PARAM_CANDLE = MAX_PARAM - 7;
 static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CANDLE;
