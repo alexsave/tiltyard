@@ -37,6 +37,11 @@ LIMIT SELL + STOP SELL (tp + sl for buy)
 // day rests only for this session, gtd until its date (day index carried in second_id)
 // a wake carries no quantity and never reaches the book, like a ping - it rests in a trigger
 // heap keyed by its price (reused field), and the client keeps its id to cancel it
+// specifically a closed candle: candle_tier points at the tier's CB and snapshot_id is the
+// offset into it (resolved with cb_at). implies a broadcast
+static const u8 CANDLE_BIT = 21;
+// a broadcast, not the client's own order - covers an mbo snapshot or a candle push
+static const u8 BROADCAST_BIT = 20;
 static const u8 WAKE_BIT = 19;
 static const u8 GTD_BIT = 18;
 static const u8 DAY_BIT = 17;
