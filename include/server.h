@@ -93,6 +93,12 @@ typedef struct ServerContext {
     CB* candles_hr;
     CB* candles_day;
 
+    // stream roster: client_ids grouped by sub_tier, built once and never mutated (ws
+    // connect/disconnect is read live at send time). tier_offset is CSR - tier t owns
+    // stream_roster[tier_offset[t] .. tier_offset[t+1]).
+    u32* stream_roster;
+    u32* tier_offset;
+
 } ServerContext;
 
 

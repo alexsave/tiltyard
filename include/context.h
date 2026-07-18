@@ -6,7 +6,7 @@
 
 typedef struct Context {
     // or how about just give them the damn reponse
-    void* mbo_snapshot;
+    void* data_snapshot;
     // same thing here, both needed
     u32 order_id; // the order this response is for. MAX_U32 for broadcasts?
     // this is problematic, as the order is always 100% up to date
