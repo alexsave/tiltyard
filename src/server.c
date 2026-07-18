@@ -1531,7 +1531,9 @@ void server_candle_close(ServerContext* sc) {
     if (now % DAY_TO_NS == 0)
         emit_closed_candle(sc, sc->candles_day, DAY_TO_NS, TIER_CANDLE_DAY);
 
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS);
+    // snap to the next whole second - a slow-scheduled open lands off-boundary, and a flat +1s
+    // would carry that jitter forever, so bar->time (bucket-aligned) never lines up with now
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS - now % S_TO_NS);
 }
 
 void server_exec_end(ServerContext* sc) {

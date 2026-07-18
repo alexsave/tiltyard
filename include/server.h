@@ -102,6 +102,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 void server_arrival(ServerContext* sc, u32 order_id);
 void server_market_open(ServerContext* sc);
 void server_market_close(ServerContext* sc);
+void server_candle_close(ServerContext* sc);
 void server_hw_to_sw(ServerContext* sc);
 void server_exec_end(ServerContext* sc);
 void server_exec_start(ServerContext* sc);
