@@ -67,11 +67,12 @@ static const u64 FIRST_OPEN_NS = 14 * H_TO_NS + 30 * MIN_TO_NS;
 static const u64 OPEN_TO_CLOSE_NS = 6 * H_TO_NS + 30 * MIN_TO_NS;
 static const u64 CLOSE_TO_OPEN_NS = 17 * H_TO_NS + 30 * MIN_TO_NS;
 
-// orders park for this long before each bell, then the bell rings the cross (nyse runs the
-// closing accumulation for the last 10 minutes; the open bell mirrors it). the freeze lands
-// this long before the bell, matching nyse's 15:58 cancel cutoff before the 16:00 close
-static const u64 AUCTION_WINDOW_NS = 10 * MIN_TO_NS;
-static const u64 AUCTION_FREEZE_NS = 2 * MIN_TO_NS;
+// accumulation windows before each bell (nyse: opening order entry from 6:30, moc cutoff 15:50)
+// and the imbalance freeze that ends cancels (nyse: 9:29:55 before the open, 15:59 before close)
+static const u64 AUCTION_OPEN_WINDOW_NS = 3 * H_TO_NS;
+static const u64 AUCTION_CLOSE_WINDOW_NS = 10 * MIN_TO_NS;
+static const u64 AUCTION_OPEN_FREEZE_NS = 5 * S_TO_NS;
+static const u64 AUCTION_CLOSE_FREEZE_NS = 1 * MIN_TO_NS;
 
 // 1/1/1970 is a thursday, so day % 7 == 1 is a friday - that close also jumps the weekend
 static const u64 FRIDAY_MOD = 1;

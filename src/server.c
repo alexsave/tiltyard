@@ -1814,7 +1814,10 @@ void server_auction_accumulate(ServerContext* sc) {
     sc->auction_frozen = 0;
     printf("[%llus] AUCTION ACCUMULATING\n", sch_now_ns(sc->sch)/S_TO_NS);
 
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_FREEZE), AUCTION_WINDOW_NS - AUCTION_FREEZE_NS);
+    // opening and closing windows differ; is_open tells them apart (still closed = opening)
+    u64 window = sc->is_open ? AUCTION_CLOSE_WINDOW_NS : AUCTION_OPEN_WINDOW_NS;
+    u64 freeze = sc->is_open ? AUCTION_CLOSE_FREEZE_NS : AUCTION_OPEN_FREEZE_NS;
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_FREEZE), window - freeze);
 }
 
 // the freeze: cancels stop, and it schedules the coming bell - a close if we're mid-session,
@@ -1822,7 +1825,8 @@ void server_auction_accumulate(ServerContext* sc) {
 void server_auction_freeze(ServerContext* sc) {
     sc->auction_frozen = 1;
     u32 bell = sc->is_open ? CONTROL_PARAM_CLOSE : CONTROL_PARAM_OPEN;
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, bell), AUCTION_FREEZE_NS);
+    u64 freeze = sc->is_open ? AUCTION_CLOSE_FREEZE_NS : AUCTION_OPEN_FREEZE_NS;
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, bell), freeze);
 }
 
 void server_market_open(ServerContext* sc) {
@@ -1833,7 +1837,7 @@ void server_market_open(ServerContext* sc) {
     printf("[%llus] MARKET OPEN\n", sch_now_ns(sc->sch)/S_TO_NS);
 
     // the closing accumulation starts a window before the close bell
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_CLOSE), OPEN_TO_CLOSE_NS - AUCTION_WINDOW_NS);
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_CLOSE), OPEN_TO_CLOSE_NS - AUCTION_CLOSE_WINDOW_NS);
     // start the per-second candle-close loop; it self-reschedules until the market closes
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS);
 }
@@ -1866,7 +1870,7 @@ void server_market_close(ServerContext* sc) {
         server_prune_book(sc);
 
     // the next opening accumulation starts a window before the open bell. fridays jump the weekend
-    u64 gap = CLOSE_TO_OPEN_NS - AUCTION_WINDOW_NS;
+    u64 gap = CLOSE_TO_OPEN_NS - AUCTION_OPEN_WINDOW_NS;
     if (today % 7 == FRIDAY_MOD)
         gap += WEEKEND_NS;
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN), gap);

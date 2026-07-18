@@ -51,7 +51,7 @@ int main(int argc, char* argv[]){
 
     // first opening accumulation, a window before the first bell. the bells chain from there
     u64 open_event = build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN);
-    sch_schedule(sch, open_event, FIRST_OPEN_NS - AUCTION_WINDOW_NS);
+    sch_schedule(sch, open_event, FIRST_OPEN_NS - AUCTION_OPEN_WINDOW_NS);
 
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;
