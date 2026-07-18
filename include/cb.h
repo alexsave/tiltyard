@@ -30,6 +30,8 @@ void* cb_last(CB* cb);
 u8 cb_is_empty(CB* cb);
 // how many entries are queued right now
 u32 cb_count(CB* cb);
+// empty the buffer in O(1) by resetting the indices; keeps the allocation for reuse
+void cb_clear(CB* cb);
 // the i-th entry from the front without dequeuing (0 = next out). the ring can wrap, so
 // callers can't just index the buffer
 void* cb_at(CB* cb, u32 i);

@@ -95,6 +95,11 @@ void* cb_at(CB* cb, u32 i) {
     return cb->buffer + ((cb->start + i) % cb->capacity) * cb->type_size;
 }
 
+void cb_clear(CB* cb) {
+    cb->start = INITIAL_START_INDEX;
+    cb->end = 0;
+}
+
 void cb_free(CB* cb) {
     free(cb->buffer);
 
