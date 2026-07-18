@@ -927,6 +927,9 @@ void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
             cs->shares -= q;
         }
         shares -= q;
+
+        u32 fstatus = (1 << FILL_BIT) | (1 << AUCTION_BIT) | (o->quantity > 0 ? (1 << PARTIAL_FILL_BIT) : 0);
+        schedule_response(sc, o->client_id, fstatus, q, id, clearing, REASON_NONE);
     }
 
     if (shares == 0) // markets took it all, no limit fills to work out
@@ -937,13 +940,15 @@ void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
     CB* sorted = is_buy ? sc->auction_bid_sorted : sc->auction_ask_sorted;
     u32 cnt = cb_count(sorted);
     u64* buf = (u64*)sorted->buffer;
+    u32* arrivals = (u32*)sc->auction_arrivals->buffer; // entry low bits are an arrival index
     for (u32 k = 0; k < cnt && shares > 0; k++) {
         u64 entry = is_buy ? buf[cnt - 1 - k] : buf[k];
         u16 price = (u16)(entry >> 32);
         if (is_buy ? price < clearing : price > clearing)
             break;
 
-        Order* o = (Order*)fl_get(sc->orders, (u32)(entry & MAX_U32));
+        u32 oid = arrivals[(u32)(entry & MAX_U32)];
+        Order* o = (Order*)fl_get(sc->orders, oid);
         u32 q = o->quantity < shares ? o->quantity : shares;
         o->quantity -= q;
 
@@ -956,6 +961,9 @@ void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
             cs->shares -= q;
         }
         shares -= q;
+
+        u32 fstatus = (1 << FILL_BIT) | (1 << AUCTION_BIT) | (o->quantity > 0 ? (1 << PARTIAL_FILL_BIT) : 0);
+        schedule_response(sc, o->client_id, fstatus, q, oid, clearing, REASON_NONE);
     }
 }
 
@@ -1007,7 +1015,7 @@ void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing
         }
         maker->quantity -= q;
 
-        u32 fstatus = (1 << FILL_BIT) | (partial ? (1 << PARTIAL_FILL_BIT) : 0);
+        u32 fstatus = (1 << FILL_BIT) | (1 << AUCTION_BIT) | (partial ? (1 << PARTIAL_FILL_BIT) : 0);
         schedule_response(sc, maker_client, fstatus, q, fill->order_id, clearing, REASON_NONE);
     }
 
@@ -1021,6 +1029,7 @@ void server_auction(ServerContext* sc) {
     // (base demand/supply). arrivals stays intact for the remainder drain, read flat (no wrap)
     u32 base_demand = 0;
     u32 base_supply = 0;
+    u32 total_demand = 0; // summed limit-bid shares (the market side is base_demand)
     u32 n = cb_count(sc->auction_arrivals);
     u32* arrivals = (u32*)sc->auction_arrivals->buffer;
     for (u32 i = 0; i < n; i++) {
@@ -1041,19 +1050,21 @@ void server_auction(ServerContext* sc) {
             else
                 base_supply += o->quantity;
         } else {
-            u64 entry = ((u64)o->price << 32) | id;
+            // key by arrival index i, not id: same-price orders then sort by arrival, not by a
+            // recycled id. arrivals[i] maps the index back to the order id at walk/fill time
+            u64 entry = ((u64)o->price << 32) | i;
             pq_push(is_buy ? sc->auction_bids : sc->auction_asks, entry);
+            if (is_buy)
+                total_demand += o->quantity;
         }
     }
 
     // pop the limit heaps into the ascending scratch buffers (reused for the walk and the fill)
     u32 bid_count = sc->auction_bids->current - 1;
     u32 ask_count = sc->auction_asks->current - 1;
-    u32 total_demand = 0; // summed limit-bid shares (the market side is base_demand)
     for (u32 i = 0; i < bid_count; i++) {
         u64 e = pq_pop(sc->auction_bids);
         cb_queue(sc->auction_bid_sorted, &e);
-        total_demand += ((Order*)fl_get(sc->orders, (u32)(e & MAX_U32)))->quantity;
     }
     for (u32 i = 0; i < ask_count; i++) {
         u64 e = pq_pop(sc->auction_asks);
@@ -1096,13 +1107,13 @@ void server_auction(ServerContext* sc) {
             price = mbo->levels[book_ask_i].price;
 
         while (ask_i < ask_count && (u16)(ask_buf[ask_i] >> 32) == price)
-            asks_at_or_below += ((Order*)fl_get(sc->orders, (u32)(ask_buf[ask_i++] & MAX_U32)))->quantity;
+            asks_at_or_below += ((Order*)fl_get(sc->orders, arrivals[(u32)(ask_buf[ask_i++] & MAX_U32)]))->quantity;
         while (book_ask_i < mbo->level_count && mbo->levels[book_ask_i].price == price)
             asks_at_or_below += mbo->levels[book_ask_i++].quantity;
 
         u32 bids_here = 0;
         while (bid_i < bid_count && (u16)(bid_buf[bid_i] >> 32) == price)
-            bids_here += ((Order*)fl_get(sc->orders, (u32)(bid_buf[bid_i++] & MAX_U32)))->quantity;
+            bids_here += ((Order*)fl_get(sc->orders, arrivals[(u32)(bid_buf[bid_i++] & MAX_U32)]))->quantity;
         while (book_bid_i < ask_start && mbo->levels[book_bid_i].price == price)
             bids_here += mbo->levels[book_bid_i++].quantity;
 
