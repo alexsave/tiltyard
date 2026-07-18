@@ -96,6 +96,31 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     // CB is fine for this and candles
     // kinda orthogonal stream
 
+    // build the stream roster: client_ids bucketed by sub_tier, tier_offset marking each range.
+    // built once; ws state is read live at send time (see emit_closed_candle)
+    u32 client_count = sc->ho->num_clients;
+    sc->stream_roster = malloc(client_count * sizeof(u32));
+    sc->tier_offset = malloc((TIER_COUNT + 1) * sizeof(u32));
+    u32 write_idx = 0;
+    for (u8 t = 0; t < TIER_COUNT; t++) {
+        sc->tier_offset[t] = write_idx;
+        for (u32 c = 0; c < client_count; c++)
+            if (sc->client_settings[c].sub_tier == t)
+                sc->stream_roster[write_idx++] = c;
+    }
+    sc->tier_offset[TIER_COUNT] = write_idx;
+
+    // map each tier to its data structure so a broadcast's u8 tier resolves in one index
+    sc->tier_source = malloc(TIER_COUNT * sizeof(void*));
+    sc->tier_source[TIER_MBO] = sc->mbo_bs;
+    sc->tier_source[TIER_MBP] = sc->mbp_bs;
+    sc->tier_source[TIER_MBP10] = sc->mbp10_bs;
+    sc->tier_source[TIER_MBP1] = sc->mbp1_bs;
+    sc->tier_source[TIER_TRADE] = sc->trades;
+    sc->tier_source[TIER_CANDLE_SEC] = sc->candles_sec;
+    sc->tier_source[TIER_CANDLE_MIN] = sc->candles_min;
+    sc->tier_source[TIER_CANDLE_HR] = sc->candles_hr;
+    sc->tier_source[TIER_CANDLE_DAY] = sc->candles_day;
 
     return sc;
 }
@@ -119,6 +144,45 @@ void schedule_pair_response(ServerContext* sc, u32 client_id, u32 status, u32 or
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
     sc->client_settings[client_id].will_notify = 1;
+}
+
+// broadcast one tier's latest data to one client. index is a blob id (blob tiers) or a buffer
+// offset (trade/candle), resolved at delivery so a store that moves mid-flight stays safe. blob
+// tiers pin the blob with a ref for the trip; buffers need nothing (cb_at re-resolves).
+void schedule_stream_response(ServerContext* sc, u32 client_id, u8 tier, u32 index) {
+    if (tier <= TIER_MBP1)
+        bs_bump_refs((BS*)sc->tier_source[tier], index);
+    Response r = {.tier = tier, .snapshot_id = index, .client_id = client_id, .status = 1u << BROADCAST_BIT, .order_id = MAX_U32};
+    u32 response_id = fl_insert(sc->responses, &r);
+    u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
+    sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + client_id, sc->rand));
+}
+
+// after a book change: push each book tier's latest snapshot to its subscribers, then the latest
+// print to trade subscribers. one loop per data shape so no per-client shape check is needed.
+// skips clients that already got a direct response this cycle (will_notify), then clears it.
+void server_stream(ServerContext* sc) {
+    ClientSettings* cs = sc->client_settings;
+
+    u32 blob_ids[4] = {sc->last_mbo, sc->last_mbp, sc->last_mbp10, sc->last_mbp1};
+    for (u8 t = TIER_MBO; t <= TIER_MBP1; t++)
+        for (u32 i = sc->tier_offset[t]; i < sc->tier_offset[t + 1]; i++) {
+            u32 cid = sc->stream_roster[i];
+            if (!cs[cid].will_notify && cs[cid].ws)
+                schedule_stream_response(sc, cid, t, blob_ids[t]);
+        }
+
+    if (!cb_is_empty(sc->trades)) {
+        u32 offset = cb_count(sc->trades) - 1;
+        for (u32 i = sc->tier_offset[TIER_TRADE]; i < sc->tier_offset[TIER_TRADE + 1]; i++) {
+            u32 cid = sc->stream_roster[i];
+            if (!cs[cid].will_notify && cs[cid].ws)
+                schedule_stream_response(sc, cid, TIER_TRADE, offset);
+        }
+    }
+
+    for (u32 ci = 0; ci < sc->ho->num_clients; ci++)
+        cs[ci].will_notify = 0;
 }
 
 // checks the cancel order id valididtiy, 0 if it's good to cancel
@@ -1355,15 +1419,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     else
         schedule_response(sc, in->client_id, status, filled, exec_order_id, in->price, rej_reason);
 
-    // final broadcast send
-    for (u32 ci = 0; ci < ho->num_clients; ci++){
-        if (client_settings[ci].will_notify == 0 && client_settings[ci].ws) {
-            schedule_response(sc, ci, 0, 0, MAX_U32, 0, REASON_NONE);
-        }
-        // reset
-        client_settings[ci].will_notify = 0;
-    }
-} 
+    // per-tier market-data fan-out (mbo/mbp/mbp10/mbp1 + trade) to their ws subscribers
+    server_stream(sc);
+}
 
 // a resting order whose time in force just ran out: give back its reserve, tell the client,
 // and queue it (keyed by price) for the batch book prune. guarded against stale ids - the
@@ -1510,9 +1568,13 @@ static void emit_closed_candle(ServerContext* sc, CB* candles, u64 duration, u8 
     if (!bar || bar->time != sch_now_ns(sc->sch) - duration)
         return; // no trade in the period that just ended, nothing new to close
 
-    // TODO: fan `bar` out to every ws client subscribed to `tier` via the stream roster
-    printf("CANDLE CLOSE tier %u t=%llus O=%u H=%u L=%u C=%u V=%u\n",
-           tier, bar->time / S_TO_NS, bar->open, bar->hi, bar->lo, bar->close, bar->volume);
+    // the just-closed bar is the tail; hand its offset to every ws client subscribed to this tier
+    u32 offset = cb_count(candles) - 1;
+    for (u32 i = sc->tier_offset[tier]; i < sc->tier_offset[tier + 1]; i++) {
+        u32 client_id = sc->stream_roster[i];
+        if (sc->client_settings[client_id].ws)
+            schedule_stream_response(sc, client_id, tier, offset);
+    }
 }
 
 // fired once a second while the market is open. the second just ended, and any longer duration
@@ -1663,6 +1725,9 @@ void server_free(ServerContext* sc) {
     cb_free(sc->candles_min);
     cb_free(sc->candles_hr);
     cb_free(sc->candles_day);
+    free(sc->stream_roster);
+    free(sc->tier_offset);
+    free(sc->tier_source);
     cb_free(sc->sw_queue);
     cb_free(sc->hw_queue);
     cb_free(sc->convert_holder);
