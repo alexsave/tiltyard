@@ -62,6 +62,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->wake_below = xpq_init();
 
     sc->auctioning = 0;
+    sc->auction_frozen = 0;
     sc->auction_bids = pq_init(); // both limit-only, (price << 32 | id)
     sc->auction_asks = pq_init();
     sc->auction_market_bids = cb_init(sizeof(u32)); // market-only, arrival order
@@ -846,6 +847,12 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
 
     // a pure cancel tombstones its target so the cross drops it and reconciles book/reserves
     if (status & (1 << CANCEL_BIT)) {
+        // once the window freezes, cancels are rejected - only adds still park
+        if (sc->auction_frozen) {
+            in->status |= (1 << REJECT_BIT);
+            schedule_response(sc, in->client_id, (1 << CANCEL_BIT) | (1 << REJECT_BIT), 0, order_id, 0, REJ_BAD_QUALIFIER);
+            return;
+        }
         Order* tgt = (Order*)fl_get(sc->orders, in->other_id);
         u8 reason = REASON_NONE;
         if (tgt->client_id != in->client_id)
@@ -1798,16 +1805,41 @@ void server_prune_book(ServerContext* sc) {
     bs_get(mbo_bs, prev_last_mbo);
 }
 
+// start an accumulation window: adds park until the cross. it schedules only the freeze, which
+// in turn schedules the bell - so each event in the chain schedules just the next one
+void server_auction_accumulate(ServerContext* sc) {
+    sc->auctioning = 1;
+    sc->auction_frozen = 0;
+    printf("[%llus] AUCTION ACCUMULATING\n", sch_now_ns(sc->sch)/S_TO_NS);
+
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_FREEZE), AUCTION_WINDOW_NS - AUCTION_FREEZE_NS);
+}
+
+// the freeze: cancels stop, and it schedules the coming bell - a close if we're mid-session,
+// otherwise the open. so accumulate -> freeze -> bell, one link at a time
+void server_auction_freeze(ServerContext* sc) {
+    sc->auction_frozen = 1;
+    u32 bell = sc->is_open ? CONTROL_PARAM_CLOSE : CONTROL_PARAM_OPEN;
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, bell), AUCTION_FREEZE_NS);
+}
+
 void server_market_open(ServerContext* sc) {
+    server_auction(sc); // cross the accumulated opening orders, then hand off to continuous
+    sc->auctioning = 0;
+    sc->auction_frozen = 0;
     sc->is_open = 1;
     printf("[%llus] MARKET OPEN\n", sch_now_ns(sc->sch)/S_TO_NS);
 
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CLOSE), OPEN_TO_CLOSE_NS);
+    // the closing accumulation starts a window before the close bell
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_CLOSE), OPEN_TO_CLOSE_NS - AUCTION_WINDOW_NS);
     // start the per-second candle-close loop; it self-reschedules until the market closes
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_CANDLE), S_TO_NS);
 }
 
 void server_market_close(ServerContext* sc) {
+    server_auction(sc); // cross the accumulated closing orders before the book goes dark
+    sc->auctioning = 0;
+    sc->auction_frozen = 0;
     sc->is_open = 0;
     printf("[%llus] MARKET CLOSE\n", sch_now_ns(sc->sch)/S_TO_NS);
 
@@ -1831,11 +1863,11 @@ void server_market_close(ServerContext* sc) {
     if (!pq_is_empty(sc->price_pq))
         server_prune_book(sc);
 
-    // fridays jump the weekend too
-    u64 gap = CLOSE_TO_OPEN_NS;
+    // the next opening accumulation starts a window before the open bell. fridays jump the weekend
+    u64 gap = CLOSE_TO_OPEN_NS - AUCTION_WINDOW_NS;
     if (today % 7 == FRIDAY_MOD)
         gap += WEEKEND_NS;
-    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_OPEN), gap);
+    sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN), gap);
 }
 
 // a bar of `duration` just ended: if one actually formed in the period that ended (its bucket

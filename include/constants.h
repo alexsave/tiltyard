@@ -43,16 +43,22 @@ static const u64 CONTROL_TYPE = 3;
 // yes i know that these go from the top while the special packets go from teh bototm
 // honestly special packets should probably go from the top too.
 // lets see if fl can quickly accomodate this
-// open and close are kept the two highest so the jitter-skip in sch.c is a single >= CLOSE
+// the four session bells are kept the highest params so the jitter-skip in sch.c is a single
+// >= AUCTION_CLOSE - they fire at exact times with no jitter
 static const u32 CONTROL_PARAM_OPEN = MAX_PARAM - 0;
 static const u32 CONTROL_PARAM_CLOSE = MAX_PARAM - 1;
-static const u32 CONTROL_PARAM_KILL = MAX_PARAM - 2;
-static const u32 CONTROL_PARAM_EOM = MAX_PARAM - 3;
-static const u32 CONTROL_PARAM_EOD = MAX_PARAM - 4;
-static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 5;
-static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 6;
+// pre-bell accumulation starts: orders park for the cross the bell then runs
+static const u32 CONTROL_PARAM_AUCTION_OPEN = MAX_PARAM - 2;
+static const u32 CONTROL_PARAM_AUCTION_CLOSE = MAX_PARAM - 3;
+// late in an accumulation window: cancels stop, adds still park (last of the exact group)
+static const u32 CONTROL_PARAM_AUCTION_FREEZE = MAX_PARAM - 4;
+static const u32 CONTROL_PARAM_KILL = MAX_PARAM - 5;
+static const u32 CONTROL_PARAM_EOM = MAX_PARAM - 6;
+static const u32 CONTROL_PARAM_EOD = MAX_PARAM - 7;
+static const u32 CONTROL_PARAM_SLOW = MAX_PARAM - 8;
+static const u32 CONTROL_PARAM_NEWS = MAX_PARAM - 9;
 // fires once a second while the market is open to finalize/stream closed candles
-static const u32 CONTROL_PARAM_CANDLE = MAX_PARAM - 7;
+static const u32 CONTROL_PARAM_CANDLE = MAX_PARAM - 10;
 static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CANDLE;
 
 // 9:30 to 4pm eastern with no dst, so 14:30 to 21:00 utc. t=0 is midnight utc 1/1/1970,
@@ -60,6 +66,12 @@ static const u32 MIN_CONTROL_PARAM = CONTROL_PARAM_CANDLE;
 static const u64 FIRST_OPEN_NS = 14 * H_TO_NS + 30 * MIN_TO_NS;
 static const u64 OPEN_TO_CLOSE_NS = 6 * H_TO_NS + 30 * MIN_TO_NS;
 static const u64 CLOSE_TO_OPEN_NS = 17 * H_TO_NS + 30 * MIN_TO_NS;
+
+// orders park for this long before each bell, then the bell rings the cross (nyse runs the
+// closing accumulation for the last 10 minutes; the open bell mirrors it). the freeze lands
+// this long before the bell, matching nyse's 15:58 cancel cutoff before the 16:00 close
+static const u64 AUCTION_WINDOW_NS = 10 * MIN_TO_NS;
+static const u64 AUCTION_FREEZE_NS = 2 * MIN_TO_NS;
 
 // 1/1/1970 is a thursday, so day % 7 == 1 is a friday - that close also jumps the weekend
 static const u64 FRIDAY_MOD = 1;

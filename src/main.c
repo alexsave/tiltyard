@@ -49,9 +49,9 @@ int main(int argc, char* argv[]){
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
 
-    // first bell. open and close reschedule each other from there
-    u64 open_event = build_event(CONTROL_TYPE, CONTROL_PARAM_OPEN);
-    sch_schedule(sch, open_event, FIRST_OPEN_NS);
+    // first opening accumulation, a window before the first bell. the bells chain from there
+    u64 open_event = build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN);
+    sch_schedule(sch, open_event, FIRST_OPEN_NS - AUCTION_WINDOW_NS);
 
     Holder* ho = sc->ho;
     ClientSettings* client_settings = sc->client_settings;
@@ -252,6 +252,10 @@ int main(int argc, char* argv[]){
                 server_market_open(sc);
             } else if (control_id == CONTROL_PARAM_CLOSE) {
                 server_market_close(sc);
+            } else if (control_id == CONTROL_PARAM_AUCTION_OPEN || control_id == CONTROL_PARAM_AUCTION_CLOSE) {
+                server_auction_accumulate(sc);
+            } else if (control_id == CONTROL_PARAM_AUCTION_FREEZE) {
+                server_auction_freeze(sc);
             } else if (control_id == CONTROL_PARAM_CANDLE) {
                 server_candle_close(sc);
             } else if (control_id == CONTROL_PARAM_NEWS) {

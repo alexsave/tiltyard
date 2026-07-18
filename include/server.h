@@ -77,6 +77,7 @@ typedef struct ServerContext {
     // price min-heaps (the demand/supply curves), markets into their own arrival queues (base
     // demand/supply, filled first), everything into auction_arrivals for the remainder drain
     u8 auctioning;
+    u8 auction_frozen; // late in the window: cancels rejected, adds still park
     PQ* auction_bids;
     PQ* auction_asks;
     CB* auction_market_bids;
@@ -126,6 +127,8 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 void server_arrival(ServerContext* sc, u32 order_id);
 void server_market_open(ServerContext* sc);
 void server_market_close(ServerContext* sc);
+void server_auction_accumulate(ServerContext* sc);
+void server_auction_freeze(ServerContext* sc);
 void server_candle_close(ServerContext* sc);
 void server_hw_to_sw(ServerContext* sc);
 void server_exec_end(ServerContext* sc);

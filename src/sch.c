@@ -193,9 +193,9 @@ uint64_t sch_pop(SCH* sch) {
             uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
             uint64_t priority = seconds & P_MASK;
 
-            // the opening bell and close ring on their exact second; everything else keeps the
-            // spreading jitter
-            if (!(((pop >> PARAM_BITS) & T_MASK) == CONTROL_TYPE && (pop & PARAM_MASK) >= CONTROL_PARAM_CLOSE)) {
+            // the session bells (open, close, the two auction starts, and the freeze) ring on
+            // their exact second; everything else keeps the spreading jitter
+            if (!(((pop >> PARAM_BITS) & T_MASK) == CONTROL_TYPE && (pop & PARAM_MASK) >= CONTROL_PARAM_AUCTION_FREEZE)) {
                 rand_next(sch->rand);
                 priority += (((*sch->rand) & MAX_U32) >> 3);
             }
