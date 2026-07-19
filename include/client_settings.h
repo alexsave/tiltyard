@@ -37,7 +37,9 @@ typedef struct ClientSettings {
 
     // MBO, MBP, MBP10, MBP1, trade later
     u8 sub_tier;
-    
+    // NOII imbalance feed, an add-on billed on top of the base sub_tier
+    u8 noii;
+
 } ClientSettings;
 
 #endif

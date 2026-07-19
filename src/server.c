@@ -64,6 +64,8 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
     sc->auctioning = 0;
     sc->auction_frozen = 0;
+    sc->imbalance_buy = 0;
+    sc->imbalance_sell = 0;
     sc->auction_bids = pq_init(); // both limit-only, (price << 32 | id)
     sc->auction_asks = pq_init();
     sc->auction_market_bids = cb_init(sizeof(u32)); // market-only, arrival order
@@ -80,6 +82,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->candles_min = cb_init(sizeof(Candle));
     sc->candles_hr = cb_init(sizeof(Candle));
     sc->candles_day = cb_init(sizeof(Candle));
+    sc->imbalances = cb_init(sizeof(Imbalance));
 
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
     sc->fills = cb_init(sizeof(Fill));
@@ -132,6 +135,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->tier_source[TIER_CANDLE_MIN] = sc->candles_min;
     sc->tier_source[TIER_CANDLE_HR] = sc->candles_hr;
     sc->tier_source[TIER_CANDLE_DAY] = sc->candles_day;
+    sc->tier_source[TIER_IMBALANCE] = sc->imbalances;
 
     return sc;
 }
@@ -866,6 +870,11 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
             return;
         }
         auction_release(sc->client_settings + tgt->client_id, tgt, sc->mark); // give the reserve back
+        // back the cancelled quantity out of the running imbalance
+        if ((tgt->status >> BUY_DIRECTION_BIT) & 1)
+            sc->imbalance_buy -= tgt->quantity;
+        else
+            sc->imbalance_sell -= tgt->quantity;
         tgt->quantity = 0;
         tgt->status |= (1 << REJECT_BIT);
         schedule_response(sc, in->client_id, (1 << CANCEL_BIT), 0, order_id, 0, REASON_NONE);
@@ -901,6 +910,12 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
         return;
     }
     auction_hold(cs, in, sc->mark);
+
+    // fold into the running imbalance the feed publishes (a cancel below backs it out)
+    if (status & (1 << BUY_DIRECTION_BIT))
+        sc->imbalance_buy += in->quantity;
+    else
+        sc->imbalance_sell += in->quantity;
 
     in->ns = sch_now_ns(sc->sch); // arrival stamp, breaks ties at the marginal clearing price
     cb_queue(sc->auction_arrivals, &order_id);
@@ -1167,6 +1182,11 @@ void server_auction(ServerContext* sc) {
     cb_clear(sc->auction_ask_sorted);
     cb_clear(sc->auction_market_bids);
     cb_clear(sc->auction_market_asks);
+
+    // the cross cleared all closing interest, so the imbalance resets for the next session
+    sc->imbalance_buy = 0;
+    sc->imbalance_sell = 0;
+    cb_clear(sc->imbalances); // drop this session's published snapshots
 
     // remainder, in arrival order: hand it back to continuous via the convert -> sw path, where
     // it re-reserves and rests (or bounces off the closed gate at a close). a stranded market
@@ -2017,8 +2037,12 @@ static const u64 DATA_FEE_BY_TIER[] = {
     120,  // TIER_CANDLE_MIN
     60,   // TIER_CANDLE_HR
     29,   // TIER_CANDLE_DAY eod bars, polygon starter tier
+    0,    // TIER_IMBALANCE add-on, billed separately below - never a base sub_tier
     0,    // TIER_FREE   last trade price only, no charge
 };
+
+// NOII imbalance feed, the orthogonal add-on. real NYSE Order Imbalances access is $500/mo
+static const u64 NOII_FEE_MONTHLY = 500;
 
 // monthly market-data bill: each client pays for its subscription tier, owed whether or not it
 // is connected right now. the free tier's fee is 0. flows to the exchange
@@ -2026,6 +2050,8 @@ void server_eom(ServerContext* sc) {
     for (u32 i = 0; i < sc->ho->num_clients; i++) {
         ClientSettings* cs = sc->client_settings + i;
         u64 fee = DATA_FEE_BY_TIER[cs->sub_tier];
+        if (cs->noii) // add-on rides on top of the base subscription
+            fee += NOII_FEE_MONTHLY;
         cs->cash -= fee;
         sc->exchange_cash += fee;
     }
@@ -2077,6 +2103,26 @@ void server_candle_close(ServerContext* sc) {
         emit_closed_candle(sc, sc->candles_hr, H_TO_NS, TIER_CANDLE_HR);
     if (now % DAY_TO_NS == 0)
         emit_closed_candle(sc, sc->candles_day, DAY_TO_NS, TIER_CANDLE_DAY);
+
+    // reuse this 1s tick to publish the NOII while the closing window runs (the opening window is
+    // pre-open, so is_open gates it out for now). the running totals are already maintained, so
+    // this is O(subscribers). indicative clearing price comes later, recomputed only on this tick
+    if (sc->auctioning) {
+        u32 buy = sc->imbalance_buy;
+        u32 sell = sc->imbalance_sell;
+        Imbalance imb = {
+            .ns = now,
+            .ref_price = sc->mark,
+            .paired = buy < sell ? buy : sell,
+            .imbalance = buy > sell ? buy - sell : sell - buy,
+            .buy_side = buy >= sell,
+        };
+        cb_queue(sc->imbalances, &imb);
+        u32 offset = cb_count(sc->imbalances) - 1;
+        for (u32 c = 0; c < sc->ho->num_clients; c++)
+            if (sc->client_settings[c].noii && sc->client_settings[c].ws)
+                schedule_stream_response(sc, c, TIER_IMBALANCE, offset);
+    }
 
     // snap to the next whole second - a slow-scheduled open lands off-boundary, and a flat +1s
     // would carry that jitter forever, so bar->time (bucket-aligned) never lines up with now
@@ -2210,6 +2256,7 @@ void server_free(ServerContext* sc) {
     cb_free(sc->candles_min);
     cb_free(sc->candles_hr);
     cb_free(sc->candles_day);
+    cb_free(sc->imbalances);
     free(sc->stream_roster);
     free(sc->tier_offset);
     free(sc->tier_source);

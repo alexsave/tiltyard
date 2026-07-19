@@ -25,6 +25,16 @@ typedef struct Trade {
     u8 direction; // of taker
 } Trade;
 
+// one NOII publication during an accumulation window: how much closing interest pairs off, how
+// much is left unpaired, and which side that imbalance sits on
+typedef struct Imbalance {
+    u64 ns;
+    u16 ref_price;  // reference (last continuous) price
+    u32 paired;     // min(buy, sell) closing interest
+    u32 imbalance;  // |buy - sell| unpaired closing interest
+    u8 buy_side;    // 1 if buy-heavy, 0 if sell-heavy
+} Imbalance;
+
 void update_trade(ServerContext* sc, u32 quantity, u16 price, u8 direction);
 
 #endif

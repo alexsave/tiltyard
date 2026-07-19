@@ -25,9 +25,12 @@ static const u8 TIER_CANDLE_SEC = 5;
 static const u8 TIER_CANDLE_MIN = 6;
 static const u8 TIER_CANDLE_HR = 7;
 static const u8 TIER_CANDLE_DAY = 8;
-static const u8 TIER_COUNT = TIER_CANDLE_DAY + 1;
+// NOII imbalance feed. an orthogonal add-on: delivered like the other streams but never chosen
+// as a base sub_tier - a client flags it separately and pays on top of its base subscription
+static const u8 TIER_IMBALANCE = 9;
+static const u8 TIER_COUNT = TIER_IMBALANCE + 1;
 // no feed, no ws broadcasts, last trade price only. pays nothing
-static const u8 TIER_FREE = 9;
+static const u8 TIER_FREE = 10;
 
 // basically everything we were holding as locals in src/main
 // bundled into a struct
@@ -83,6 +86,11 @@ typedef struct ServerContext {
     // demand/supply, filled first), everything into auction_arrivals for the remainder drain
     u8 auctioning;
     u8 auction_frozen; // late in the window: cancels rejected, adds still park
+
+    // running closing-interest totals for the imbalance/NOII feed, maintained as orders park
+    // and cancel, reset to 0 after each cross. the published imbalance is their signed difference
+    u32 imbalance_buy;
+    u32 imbalance_sell;
     PQ* auction_bids;
     PQ* auction_asks;
     CB* auction_market_bids;
@@ -112,6 +120,10 @@ typedef struct ServerContext {
     CB* candles_min;
     CB* candles_hr;
     CB* candles_day;
+
+    // NOII publications, appended once a second during an accumulation window and broadcast to
+    // add-on subscribers. append-only like the candles, so it reads back as a flat array
+    CB* imbalances;
 
     // stream roster: client_ids grouped by sub_tier, built once and never mutated (ws
     // connect/disconnect is read live at send time). tier_offset is CSR - tier t owns
