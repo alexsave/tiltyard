@@ -266,12 +266,23 @@ int main(int argc, char* argv[]){
                 sch_schedule(sch, build_event(CONTROL_TYPE, CONTROL_PARAM_EOM), delay_to_next_month(sch_now_ns(sch)));
             } else if (control_id == CONTROL_PARAM_OPEN) {
                 server_market_open(sc);
+                // continuous trading. context is shared, so set the phase once here
+                context->is_open = 1;
+                context->auctioning = 0;
+                context->auction_frozen = 0;
             } else if (control_id == CONTROL_PARAM_CLOSE) {
                 server_market_close(sc);
+                context->is_open = 0;
+                context->auctioning = 0;
+                context->auction_frozen = 0;
             } else if (control_id == CONTROL_PARAM_AUCTION_OPEN || control_id == CONTROL_PARAM_AUCTION_CLOSE) {
+                // accumulation window opens - is_open keeps its value (closed pre-open, open pre-close)
                 server_auction_accumulate(sc);
+                context->auctioning = 1;
+                context->auction_frozen = 0;
             } else if (control_id == CONTROL_PARAM_AUCTION_FREEZE) {
                 server_auction_freeze(sc);
+                context->auction_frozen = 1;
             } else if (control_id == CONTROL_PARAM_CANDLE) {
                 server_candle_close(sc);
             } else if (control_id == CONTROL_PARAM_NEWS) {

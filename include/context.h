@@ -32,6 +32,12 @@ typedef struct Context {
     // last trade price. every tier can read this, the free tier gets nothing else
     u16 mark;
 
+    // session phase, mirrored from the server at each bell/auction transition. lets a client
+    // tell continuous trading from an accumulation window or the freeze
+    u8 is_open;
+    u8 auctioning;
+    u8 auction_frozen;
+
     // abstract 0-255 scale of how well the $TYD company is doing
     // clients can react to it however they want
     u8 news_signal;
