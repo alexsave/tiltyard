@@ -947,7 +947,8 @@ void auction_fill_side(ServerContext* sc, u32 shares, u16 clearing, u8 is_buy) {
         if (is_buy ? price < clearing : price > clearing)
             break;
 
-        u32 oid = arrivals[(u32)(entry & MAX_U32)];
+        u32 idx = (u32)(entry & MAX_U32);
+        u32 oid = arrivals[is_buy ? ~idx : idx]; // bids store ~arrival index (see server_auction)
         Order* o = (Order*)fl_get(sc->orders, oid);
         u32 q = o->quantity < shares ? o->quantity : shares;
         o->quantity -= q;
@@ -1050,9 +1051,12 @@ void server_auction(ServerContext* sc) {
             else
                 base_supply += o->quantity;
         } else {
-            // key by arrival index i, not id: same-price orders then sort by arrival, not by a
-            // recycled id. arrivals[i] maps the index back to the order id at walk/fill time
-            u64 entry = ((u64)o->price << 32) | i;
+            // tie-break by arrival, not by a recycled id. both are min-heaps popped into ascending
+            // buffers, but asks fill from the bottom and bids from the top - so asks store the
+            // arrival index i, bids store ~i, both leaving earliest-first at the fill end.
+            // arrivals[i] maps the index back to the order id at walk/fill time
+            u32 tie = is_buy ? ~i : i;
+            u64 entry = ((u64)o->price << 32) | tie;
             pq_push(is_buy ? sc->auction_bids : sc->auction_asks, entry);
             if (is_buy)
                 total_demand += o->quantity;
@@ -1113,7 +1117,7 @@ void server_auction(ServerContext* sc) {
 
         u32 bids_here = 0;
         while (bid_i < bid_count && (u16)(bid_buf[bid_i] >> 32) == price)
-            bids_here += ((Order*)fl_get(sc->orders, arrivals[(u32)(bid_buf[bid_i++] & MAX_U32)]))->quantity;
+            bids_here += ((Order*)fl_get(sc->orders, arrivals[~(u32)(bid_buf[bid_i++] & MAX_U32)]))->quantity;
         while (book_bid_i < ask_start && mbo->levels[book_bid_i].price == price)
             bids_here += mbo->levels[book_bid_i++].quantity;
 
