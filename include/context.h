@@ -29,6 +29,9 @@ typedef struct Context {
     u64 real_time_ns;
     u64 wake_delay_ns;
 
+    // last trade price. every tier can read this, the free tier gets nothing else
+    u16 mark;
+
     // abstract 0-255 scale of how well the $TYD company is doing
     // clients can react to it however they want
     u8 news_signal;

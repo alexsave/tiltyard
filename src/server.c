@@ -1235,7 +1235,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     // for now we'll just handle socket connections
     u8 is_toggle_ws = (in->status & (1 << WS_BIT));
-    if (is_toggle_ws) {
+    if (is_toggle_ws && cs->sub_tier == TIER_FREE) {
+        // free tier gets no live stream, only last trade price on demand
+        status |= (1 << REJECT_BIT);
+        rej_reason = REJ_NO_WS_ACCESS;
+    } else if (is_toggle_ws) {
         cs->ws = !(cs->ws);
         status |= (1 << WS_BIT);
     }
@@ -1995,6 +1999,36 @@ void server_market_close(ServerContext* sc) {
     if (today % 7 == FRIDAY_MOD)
         gap += WEEKEND_NS;
     sch_schedule(sc->sch, build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN), gap);
+}
+
+// monthly data fee by sub_tier, indexed by the TIER_* order in server.h. raw feeds are the real
+// nyse proprietary access fees: mbo=Integrated $8400, mbp=OpenBook $5000, mbp1=BBO $1500,
+// trade=Trades $1500 (mbp10 has no exact product, interpolated). candles are the vendor-derived
+// aggregate range - polygon/databento run ~$199/mo for real-time bars down to ~$29 for eod.
+// note: a free tier (no entry here) never joins a ws broadcast roster and pays nothing - it can
+// still pull the last price on demand, like the robinhood app, but gets no streaming feed
+static const u64 DATA_FEE_BY_TIER[] = {
+    8400, // TIER_MBO   NYSE Integrated, full order-by-order depth
+    5000, // TIER_MBP   NYSE OpenBook, aggregated depth
+    3000, // TIER_MBP10 ten levels, interpolated
+    1500, // TIER_MBP1  NYSE BBO, top of book
+    1500, // TIER_TRADE NYSE Trades tape
+    199,  // TIER_CANDLE_SEC real-time bars, polygon advanced tier
+    120,  // TIER_CANDLE_MIN
+    60,   // TIER_CANDLE_HR
+    29,   // TIER_CANDLE_DAY eod bars, polygon starter tier
+    0,    // TIER_FREE   last trade price only, no charge
+};
+
+// monthly market-data bill: each client pays for its subscription tier, owed whether or not it
+// is connected right now. the free tier's fee is 0. flows to the exchange
+void server_eom(ServerContext* sc) {
+    for (u32 i = 0; i < sc->ho->num_clients; i++) {
+        ClientSettings* cs = sc->client_settings + i;
+        u64 fee = DATA_FEE_BY_TIER[cs->sub_tier];
+        cs->cash -= fee;
+        sc->exchange_cash += fee;
+    }
 }
 
 // a bar of `duration` just ended: if one actually formed in the period that ended (its bucket

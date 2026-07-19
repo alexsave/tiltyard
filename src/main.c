@@ -49,6 +49,10 @@ int main(int argc, char* argv[]){
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
 
+    // first monthly data-fee bill, at the end of the first calendar month. it rearms itself
+    u64 eom_event = build_event(CONTROL_TYPE, CONTROL_PARAM_EOM);
+    sch_schedule(sch, eom_event, delay_to_next_month(0));
+
     // first opening accumulation, a window before the first bell. the bells chain from there
     u64 open_event = build_event(CONTROL_TYPE, CONTROL_PARAM_AUCTION_OPEN);
     sch_schedule(sch, open_event, FIRST_OPEN_NS - AUCTION_OPEN_WINDOW_NS);
@@ -130,6 +134,7 @@ int main(int argc, char* argv[]){
             context->status = status;
             context->quantity_filled = response.quantity_filled;
             context->price = response.price;
+            context->mark = sc->mark; // last trade price, visible to every tier
             context->rej_reason = response.rej_reason;
             // atomic pair: the ask leg rides along in the same response (pair bit set in status)
             context->second_order_id = response.second_order_id;
@@ -149,6 +154,10 @@ int main(int argc, char* argv[]){
                     context->data_snapshot = bs_get((BS*)sc->tier_source[response.tier], snapshot_id);
                 else
                     context->data_snapshot = cb_at((CB*)sc->tier_source[response.tier], snapshot_id);
+                context->order_id = response.order_id;
+            } else if (client_settings[client_id].sub_tier == TIER_FREE) {
+                // free tier gets no book, just the last trade price already on the context
+                context->data_snapshot = 0;
                 context->order_id = response.order_id;
             } else {
                 // for some clients, they need to get the MBP. But that's later
@@ -246,8 +255,9 @@ int main(int argc, char* argv[]){
             } else if (control_id == CONTROL_PARAM_EOD) {
                 // charge interest on borrowed shorts
             } else if (control_id == CONTROL_PARAM_EOM) {
-                // charge clients subscription costs
-
+                // charge clients their monthly data subscription, then rearm at the next month end
+                server_eom(sc);
+                sch_schedule(sch, build_event(CONTROL_TYPE, CONTROL_PARAM_EOM), delay_to_next_month(sch_now_ns(sch)));
             } else if (control_id == CONTROL_PARAM_OPEN) {
                 server_market_open(sc);
             } else if (control_id == CONTROL_PARAM_CLOSE) {

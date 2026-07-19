@@ -78,6 +78,11 @@ static const u64 AUCTION_CLOSE_FREEZE_NS = 1 * MIN_TO_NS;
 static const u64 FRIDAY_MOD = 1;
 static const u64 WEEKEND_NS = 2 * DAY_TO_NS;
 
+// calendar months for end-of-month billing, jan..dec. no leap years yet, so feb is always 28
+// and every year is exactly 365 days
+static const u32 DAYS_PER_YEAR = 365;
+static const u32 MONTH_DAYS[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
 
 // maker-taker per share, in mills ($0.001). nyse ~$0.003 taker, ~$0.002 maker rebate
 static const u32 TAKER_FEE_MILLS = 3;

@@ -32,6 +32,9 @@ static const u8 CXL_SESSION_CLOSE = 12;
 // arrived while the market was closed, never reached the book
 static const u8 REJ_MARKET_CLOSED = 13;
 
+// free tier isn't entitled to a live stream, so a ws connect is refused
+static const u8 REJ_NO_WS_ACCESS = 14;
+
 static const u8 REJ_OTHER = 99;
 
 typedef struct Response {

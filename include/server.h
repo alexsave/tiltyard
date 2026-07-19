@@ -26,6 +26,8 @@ static const u8 TIER_CANDLE_MIN = 6;
 static const u8 TIER_CANDLE_HR = 7;
 static const u8 TIER_CANDLE_DAY = 8;
 static const u8 TIER_COUNT = TIER_CANDLE_DAY + 1;
+// no feed, no ws broadcasts, last trade price only. pays nothing
+static const u8 TIER_FREE = 9;
 
 // basically everything we were holding as locals in src/main
 // bundled into a struct
