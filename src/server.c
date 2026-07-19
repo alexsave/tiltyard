@@ -1211,6 +1211,13 @@ void server_auction(ServerContext* sc) {
     auction_fill_side(sc, matched - book_bid_fill, clearing, 1);
     auction_fill_side(sc, matched - book_ask_fill, clearing, 0);
 
+    // the cross is a real print - at the close, the biggest of the day and the official last
+    // price. move the mark and put it on the tape, like any trade (no aggressor, so direction 0)
+    if (matched > 0) {
+        sc->mark = clearing;
+        update_trade(sc, matched, clearing, 0);
+    }
+
     cb_clear(sc->auction_bid_sorted);
     cb_clear(sc->auction_ask_sorted);
     cb_clear(sc->auction_market_bids);
