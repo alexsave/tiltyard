@@ -30,7 +30,8 @@ typedef struct Trade {
 typedef struct Imbalance {
     u64 ns;
     u16 ref_price;  // reference (last continuous) price
-    u32 paired;     // min(buy, sell) closing interest
+    u16 clearing;   // indicative auction clearing price, from a read-only cross walk
+    u32 paired;     // matched volume at the clearing price
     u32 imbalance;  // |buy - sell| unpaired closing interest
     u8 buy_side;    // 1 if buy-heavy, 0 if sell-heavy
 } Imbalance;

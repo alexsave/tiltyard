@@ -1052,9 +1052,12 @@ void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing
     fl_release(orders, taker_id);
 }
 
-// run the call auction cross: find the single clearing price, fill markets first then limits,
-// spill the remainder (limits rest, markets cancel)
-void server_auction(ServerContext* sc) {
+// distribute the parked arrivals (limits into the price heaps, markets into the fifos), pop the
+// heaps into the ascending scratch, and walk the merged curve + resting book for the clearing
+// price and matched volume. leaves the fifos/scratch populated for the caller's fill. release=1
+// hands each order its park reserve back (the real cross settles next); release=0 leaves reserves
+// intact, for the read-only indicative the NOII feed publishes. the caller clears the workspace
+void auction_walk(ServerContext* sc, u8 release, u16* clearing_out, u32* matched_out) {
     // sort the parkers: limits into their side's price heap, markets into their side's fifo
     // (base demand/supply). arrivals stays intact for the remainder drain, read flat (no wrap)
     u32 base_demand = 0;
@@ -1069,8 +1072,10 @@ void server_auction(ServerContext* sc) {
             continue;
 
         // give the park reserve back: fills settle cash directly, the remainder re-reserves
-        // when it rests, and cancelled orders already released above
-        auction_release(sc->client_settings + o->client_id, o, sc->mark);
+        // when it rests, and cancelled orders already released above. the indicative pass keeps
+        // reserves intact - nothing settles, the orders are still parked
+        if (release)
+            auction_release(sc->client_settings + o->client_id, o, sc->mark);
 
         u8 is_buy = (o->status >> BUY_DIRECTION_BIT) & 1;
         if ((o->status >> IS_MARKET_BIT) & 1) {
@@ -1167,7 +1172,22 @@ void server_auction(ServerContext* sc) {
         matched = base_demand < base_supply ? base_demand : base_supply;
     }
 
+    *clearing_out = clearing;
+    *matched_out = matched;
+}
+
+// run the call auction cross: find the single clearing price, fill markets first then limits,
+// spill the remainder (limits rest, markets cancel)
+void server_auction(ServerContext* sc) {
+    u16 clearing;
+    u32 matched;
+    // release reserves - we settle below
+    auction_walk(sc, 1, &clearing, &matched);
     printf("AUCTION cross: clearing $%u, matched %u\n", clearing, matched);
+
+    // re-read the book for the fill; the walk already folded it into clearing/matched
+    MBO* mbo = (MBO*)bs_get_no_ref(sc->mbo_bs, sc->last_mbo);
+    u16 ask_start = mbo->hi_bid_index == MAX_U16 ? 0 : mbo->hi_bid_index + 1;
 
     // the book sits on one side of the clearing price (it can't self-cross), so at most one of
     // these is nonzero. that side of the book is consumed first, ahead of the auction arrivals
@@ -2128,10 +2148,23 @@ void server_candle_close(ServerContext* sc) {
     if (sc->auctioning) {
         u32 buy = sc->imbalance_buy;
         u32 sell = sc->imbalance_sell;
+
+        // read-only cross for the indicative clearing price and matched volume. release=0 leaves
+        // reserves and orders untouched; auction_walk borrows the heaps/fifos/scratch, so give
+        // them back empty (the pop drained the heaps, we clear the fifos and sorted scratch)
+        u16 clearing;
+        u32 matched;
+        auction_walk(sc, 0, &clearing, &matched);
+        cb_clear(sc->auction_market_bids);
+        cb_clear(sc->auction_market_asks);
+        cb_clear(sc->auction_bid_sorted);
+        cb_clear(sc->auction_ask_sorted);
+
         Imbalance imb = {
             .ns = now,
             .ref_price = sc->mark,
-            .paired = buy < sell ? buy : sell,
+            .clearing = clearing,
+            .paired = matched,
             .imbalance = buy > sell ? buy - sell : sell - buy,
             .buy_side = buy >= sell,
         };
