@@ -2031,6 +2031,21 @@ void server_eom(ServerContext* sc) {
     }
 }
 
+// one calendar day of short-borrow interest on every short, marked at the last print, 360-day
+// convention. flows from the short seller to the exchange
+void server_eod(ServerContext* sc) {
+    for (u32 i = 0; i < sc->ho->num_clients; i++) {
+        ClientSettings* cs = sc->client_settings + i;
+        if (cs->shares >= 0)
+            continue;
+
+        u64 short_value = (u64)sc->mark * (u64)(-cs->shares);
+        u64 borrow = short_value * SHORT_BORROW_ANNUAL_BPS / (BPS_DIVISOR * BORROW_DAY_BASIS);
+        cs->cash -= borrow;
+        sc->exchange_cash += borrow;
+    }
+}
+
 // a bar of `duration` just ended: if one actually formed in the period that ended (its bucket
 // start is exactly now - duration), it's final, so hand it to that tier's subscribers.
 static void emit_closed_candle(ServerContext* sc, CB* candles, u64 duration, u8 tier) {

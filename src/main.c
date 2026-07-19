@@ -49,7 +49,11 @@ int main(int argc, char* argv[]){
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
 
-    // first monthly data-fee bill, at the end of the first calendar month. it rearms itself
+    // first daily short-borrow charge at the next midnight, then it reschedules every calendar day
+    u64 eod_event = build_event(CONTROL_TYPE, CONTROL_PARAM_EOD);
+    sch_schedule(sch, eod_event, DAY_TO_NS);
+
+    // first monthly data-fee bill, at the end of the first calendar month. it reschedules itself
     u64 eom_event = build_event(CONTROL_TYPE, CONTROL_PARAM_EOM);
     sch_schedule(sch, eom_event, delay_to_next_month(0));
 
@@ -253,9 +257,11 @@ int main(int argc, char* argv[]){
             } else if (control_id == CONTROL_PARAM_SLOW) {
                 // ignore, mostly handled by sch.c
             } else if (control_id == CONTROL_PARAM_EOD) {
-                // charge interest on borrowed shorts
+                // charge one day of short-borrow interest, then reschedule for the next calendar day
+                server_eod(sc);
+                sch_schedule(sch, build_event(CONTROL_TYPE, CONTROL_PARAM_EOD), DAY_TO_NS);
             } else if (control_id == CONTROL_PARAM_EOM) {
-                // charge clients their monthly data subscription, then rearm at the next month end
+                // charge clients their monthly data subscription, then reschedule at the next month end
                 server_eom(sc);
                 sch_schedule(sch, build_event(CONTROL_TYPE, CONTROL_PARAM_EOM), delay_to_next_month(sch_now_ns(sch)));
             } else if (control_id == CONTROL_PARAM_OPEN) {
