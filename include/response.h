@@ -35,6 +35,9 @@ static const u8 REJ_MARKET_CLOSED = 13;
 // free tier isn't entitled to a live stream, so a ws connect is refused
 static const u8 REJ_NO_WS_ACCESS = 14;
 
+// past the closing-auction cutoff, only orders that relieve the imbalance are accepted
+static const u8 REJ_OFFSET_ONLY = 15;
+
 static const u8 REJ_OTHER = 99;
 
 typedef struct Response {

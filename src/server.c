@@ -894,6 +894,19 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
         return;
     }
 
+    // closing window past the cutoff: a new add must relieve the imbalance, not grow it. only the
+    // side opposite the current imbalance is accepted (NYSE offset-only orders). the free entry
+    // that ran all day and into the pre-close established this imbalance, so it isn't empty here
+    if (sc->auctioning && sc->is_open && sc->imbalance_buy != sc->imbalance_sell) {
+        u8 add_is_buy = (status >> BUY_DIRECTION_BIT) & 1;
+        u8 buy_heavy = sc->imbalance_buy > sc->imbalance_sell;
+        if (add_is_buy == buy_heavy) {
+            in->status |= (1 << REJECT_BIT);
+            schedule_response(sc, in->client_id, (1 << REJECT_BIT), 0, order_id, 0, REJ_OFFSET_ONLY);
+            return;
+        }
+    }
+
     // check and reserve buying power like a resting order would (no shorting/margin in the
     // auction for now). a buy needs cash at its price or the mark, a sell needs the shares
     ClientSettings* cs = sc->client_settings + in->client_id;
@@ -1230,8 +1243,13 @@ void server_auction(ServerContext* sc) {
 // this mostly takes care of scheduling, then passes it off to server_order
 void server_order(ServerContext* sc, u32 exec_order_id) {
 
-    // during a call auction, orders don't match - the auction handler owns them entirely
-    if (sc->auctioning) {
+    // auction-only orders (MOC/LOC, and their auction-only cancels) are held for the next cross
+    // whenever they arrive - which cross is decided by where they land: pre-open ones cross at the
+    // open, ones entered while the market is live cross at the close. everything else only diverts
+    // during the pre-open window; the closing window keeps the book live so regular orders trade on
+    Order* pending = (Order*)fl_get(sc->orders, exec_order_id);
+    u8 auction_only = (pending->status >> AUCTION_ONLY_BIT) & 1;
+    if (auction_only || (sc->auctioning && !sc->is_open)) {
         server_auction_order(sc, exec_order_id);
         return;
     }
