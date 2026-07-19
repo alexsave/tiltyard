@@ -1271,11 +1271,35 @@ void server_auction(ServerContext* sc) {
 // this mostly takes care of scheduling, then passes it off to server_order
 void server_order(ServerContext* sc, u32 exec_order_id) {
 
+    Order* pending = (Order*)fl_get(sc->orders, exec_order_id);
+    u8 pending_ws = (pending->status >> WS_BIT) & 1;
+    u8 pending_ping = (pending->status >> PING_BIT) & 1;
+    u32 real_order_mask = (1 << ASK_BID_PAIR_BIT) | (1 << CANCEL_BIT) | (1 << CAN_REP_BIT);
+
+    // a ping / ws toggle was never an order, so it clears ahead of the auction diversion - it has
+    // nothing to park at a cross, and the auction path would bounce it as an invalid quantity
+    if ((pending_ws | pending_ping) && pending->quantity == 0 && !(pending->status & real_order_mask)) {
+        ClientSettings* pcs = sc->client_settings + pending->client_id;
+        u32 ctl = (1 << CONTROL_BIT) | (pending_ping << PING_BIT);
+        u8 why = REASON_NONE;
+
+        if (pending_ws && pcs->sub_tier == TIER_FREE) {
+            // free tier gets no live stream, only last trade price on demand
+            ctl |= (1 << REJECT_BIT);
+            why = REJ_NO_WS_ACCESS;
+        } else if (pending_ws) {
+            pcs->ws = !(pcs->ws);
+            ctl |= (1 << WS_BIT);
+        }
+
+        schedule_response(sc, pending->client_id, ctl, 0, exec_order_id, 0, why);
+        return;
+    }
+
     // auction-only orders (MOC/LOC, and their auction-only cancels) are held for the next cross
     // whenever they arrive - which cross is decided by where they land: pre-open ones cross at the
     // open, ones entered while the market is live cross at the close. everything else only diverts
     // during the pre-open window; the closing window keeps the book live so regular orders trade on
-    Order* pending = (Order*)fl_get(sc->orders, exec_order_id);
     u8 auction_only = (pending->status >> AUCTION_ONLY_BIT) & 1;
     if (auction_only || (sc->auctioning && !sc->is_open)) {
         server_auction_order(sc, exec_order_id);
@@ -1348,16 +1372,6 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     u8 is_stop = (in->status >> HAS_STOP_BIT) & 1;
     // gtc is the default: no tif bit set rests the remainder, like a plain limit always did
     u8 is_gtc = !(((in->status >> IOC_BIT) & 1) | ((in->status >> FOK_BIT) & 1));
-
-    // a ping / ws toggle carries no quantity on purpose - it was never an order, so it skips
-    // the prechecks and the book entirely. the ws side effect above already happened, and
-    // nothing rests, so CONTROL_BIT tells the client to hand the slot straight back.
-    // note is_toggle_ws is the masked bit, not 0/1, so these have to be logical ands
-    if ((is_ping || is_toggle_ws) && in->quantity == 0 && !is_pair && !is_cancel && !is_can_rep) {
-        status |= (1 << CONTROL_BIT);
-        schedule_response(sc, in->client_id, status, 0, exec_order_id, 0, REASON_NONE);
-        return;
-    }
 
     // a wake is like a ping - no quantity, never reaches the book - but instead of acking and
     // leaving it rests in a trigger heap keyed by its price and keeps its slot, so the client
