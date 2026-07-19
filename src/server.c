@@ -612,13 +612,14 @@ u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* 
     }
 
     // bid draws cash, ask draws shares — separate pools, checked independently
-    u32 bp = (cs->cash - cs->reserved_cash) + freed_cash;
-    u32 sh = (cs->shares - cs->reserved_shares) + freed_shares;
+    // signed throughout: a margin loan or a short narrowed to u32 wraps past every check
+    i64 bp = (cs->cash - cs->reserved_cash) + freed_cash;
+    i64 sh = (cs->shares - cs->reserved_shares) + freed_shares;
 
-    if ((u64)in->quantity * in->price > bp)
+    if ((i64)in->quantity * in->price > bp)
         return REJ_NO_BUYING_POWER;
 
-    if (in->second_quantity > sh)
+    if ((i64)in->second_quantity > sh)
         return REJ_NO_SHARES;
 
     return REASON_NONE;
