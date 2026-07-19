@@ -4,3 +4,4 @@ tiltyard
 *.trace
 *.dSYM
 f
+**/*.DS_Store
