@@ -37,6 +37,9 @@ typedef struct ServerContext {
 
     u32 last_mbo;
     u16 mark; // last trade price, what margin marks LMV/SMV against
+    // the venue's take: taker fees, borrow, data, less maker rebates. only ever grows -
+    // the taker fee always covers the maker rebate, and borrow/data are pure inflows
+    u64 exchange_cash;
     ClientSettings* client_settings;
     BS* mbo_bs;
     u8 executing;
@@ -129,6 +132,8 @@ void server_market_open(ServerContext* sc);
 void server_market_close(ServerContext* sc);
 void server_auction_accumulate(ServerContext* sc);
 void server_auction_freeze(ServerContext* sc);
+void server_eod(ServerContext* sc);
+void server_eom(ServerContext* sc);
 void server_candle_close(ServerContext* sc);
 void server_hw_to_sw(ServerContext* sc);
 void server_exec_end(ServerContext* sc);

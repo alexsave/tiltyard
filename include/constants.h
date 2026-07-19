@@ -79,6 +79,16 @@ static const u64 FRIDAY_MOD = 1;
 static const u64 WEEKEND_NS = 2 * DAY_TO_NS;
 
 
+// maker-taker per share, in mills ($0.001). nyse ~$0.003 taker, ~$0.002 maker rebate
+static const u32 TAKER_FEE_MILLS = 3;
+static const u32 MAKER_REBATE_MILLS = 2;
+static const u32 MILLS_PER_DOLLAR = 1000;
+
+// short borrow: every calendar day on the short's market value, 360-day convention
+static const u32 SHORT_BORROW_ANNUAL_BPS = 300; // 3%/yr, easy-to-borrow-ish
+static const u32 BORROW_DAY_BASIS = 360;
+static const u32 BPS_DIVISOR = 10000;
+
 static const u32 MAX_U32 = 4294967295;
 static const u16 MAX_U16 = 65535;
 static const u8 MAX_U8 = 255;

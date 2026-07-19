@@ -49,6 +49,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
 
 
     sc->mark = 0; // no trade yet, so nothing to mark against until one prints
+    sc->exchange_cash = 0;
     sc->executing = 0;
     sc->is_open = 0; // closed until the first open event rings the bell
     sc->day_orders = cb_init(sizeof(u32)); // drained every close, so ids alone suffice
@@ -1630,6 +1631,14 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             mcs->cash -= cost;
             mcs->reserved_cash -= cost;
         }
+
+        // maker-taker: the aggressor pays a per-share fee, the resting maker earns a rebate,
+        // the exchange banks the spread
+        u64 taker_fee = (u64)q * TAKER_FEE_MILLS / MILLS_PER_DOLLAR;
+        u64 maker_rebate = (u64)q * MAKER_REBATE_MILLS / MILLS_PER_DOLLAR;
+        cs->cash -= taker_fee;
+        mcs->cash += maker_rebate;
+        sc->exchange_cash += taker_fee - maker_rebate;
 
         u32 fstatus = 1 << FILL_BIT;
         if (fill->partial) {
