@@ -642,11 +642,18 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
 
                 }
 
-            } else if (is_market) {
+            } else if (is_market || !is_gtc) {
                 // nobody to trade with, and a market order has no price to rest at, so it evaporates.
+                // an ioc/fok that crossed nothing evaporates for the other reason - it never rests,
+                // and crossing zero levels is just the degenerate case of the residual drop the two
+                // fill paths above already do. without this it falls through to the resting branch
+                // and writes a level the server has already rejected and unreserved: a phantom bid
+                // that nobody can cancel, funded by nobody, and best-of-book to every replica.
+                //
                 // empty affected range (lui = hui+1) + EXACT means we touch nothing and write no level.
                 // the u16 wrap is intended: a sell into no bids has start_search = MAX_U16, which lands
-                // lui 0 / hui MAX_U16, so hui+1 comes back to 0 and the copy ranges still cover the book
+                // lui 0 / hui MAX_U16, so hui+1 comes back to 0 and the copy ranges still cover the book.
+                // a can_rep still drops its cancel - ob_copy_range splices on price, not on op_type
                 *op_type = EXACT;
                 untouched_below = start_search;
                 untouched_above = start_search - multiplier;
