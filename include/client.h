@@ -7,11 +7,13 @@
 
 #include "strategy/client_zero.h"
 #include "strategy/client_one.h"
+#include "strategy/tier01_flickerers.h"
 
 // just add more as you wish :)
 #define IMPLS \
     X(cz) \
-    X(co)
+    X(co) \
+    X(t1)
 
 // THIS WHOLE THING needs to be passed around
 
