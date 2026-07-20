@@ -1,15 +1,19 @@
 OBJDIR := out
-OUTOBJS := $(addprefix $(OBJDIR)/, rand.o pq.o xpq.o fl.o bs.o sch.o client_zero.o cb.o client_one.o tier01_flickerers.o holder.o client.o ob.o mbp.o server.o utils.o trade.o)
 
-FLAGS := -g -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
+OUTSRCS := $(filter-out src/main.c, $(shell find src -name '*.c'))
+OUTOBJS := $(addprefix $(OBJDIR)/, $(notdir $(OUTSRCS:.c=.o)))
 
-out/%.o: src/%.c
-	gcc $(FLAGS) -c -Iinclude $< -o $@
+FLAGS := -g -MMD -MP -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
 
-out/%.o: src/strategy/%.c
+VPATH := $(sort $(dir $(OUTSRCS)))
+
+out/%.o: %.c
 	gcc $(FLAGS) -c -Iinclude $< -o $@
 
 $(OUTOBJS): | $(OBJDIR)
+
+# Pull in the generated header dependencies (see -MMD above).
+-include $(OUTOBJS:.o=.d)
 
 $(OBJDIR):
 	mkdir $(OBJDIR)
@@ -18,13 +22,12 @@ clean:
 	rm -rf out
 
 
-# test relies on out
-test: clean $(OUTOBJS)
+test: $(OUTOBJS)
 	gcc $(FLAGS) -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
 
-main: clean $(OUTOBJS)
+main: $(OUTOBJS)
 	gcc $(FLAGS) -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 
-debug: clean $(OUTOBJS)
+debug: $(OUTOBJS)
 	gcc $(FLAGS) -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 
