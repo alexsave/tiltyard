@@ -28,6 +28,9 @@ typedef struct Context {
     u32 random;
     u64 real_time_ns;
     u64 wake_delay_ns;
+    // the self-wake already in flight, MAX_U64 for none. asking for anything later than this is
+    // dropped, so a client that wants to know whether it's covered can read it instead of guessing
+    u64 next_wake_ns;
 
     // last trade price. every tier can read this, the free tier gets nothing else
     u16 mark;

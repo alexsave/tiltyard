@@ -184,6 +184,8 @@ int main(int argc, char* argv[]){
             //printf("sending to client %u order %u\n", client_id, response.order_id);
             // order 7, which filled, seems to be ignored...
             // wait a minute, will this go out of scope. hopefully not
+            // set after the clear above, so it's what the handler's own re-arm will be tested against
+            context->next_wake_ns = client_settings[client_id].next_wake_ns;
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 
             // ok they read the response order id, if it's rejected free it as its useless
