@@ -501,7 +501,18 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
         if (is_can_rep && rep->price == can->price && ((rep->status >> BUY_DIRECTION_BIT) & 1) == ((can->status >> BUY_DIRECTION_BIT & 1))) {
             *lui = cancel_index;
             *hui = cancel_index;
-            if (rep->quantity > can->quantity)
+            // only a strict reduction keeps its place - that's the partial cancel nasdaq keeps
+            // priority for. same size at the same price changed nothing, so it re-times like any
+            // other replace and goes to the back, which is what stops a maker requoting for free.
+            //
+            // nasdaq is stricter than this: per the OUCH spec a replace ALWAYS re-times, and the
+            // only way to shed size and keep priority is a cancel carrying the new intended size.
+            // we fold that into the shrink op instead of a second message type. no venue rejects
+            // a no-change replace - they take it, publish it, and bill for it: nasdaq's excessive
+            // messaging policy charges $0.005/order past a 100:1 weighted order-to-trade ratio and
+            // $0.01 past 1000:1, eurex the same idea via its OTR / excessive system usage fee.
+            // losing the queue is the cheap version of that disincentive, and it needs no billing
+            if (rep->quantity >= can->quantity)
                 *op_type = CAN_REP;
             else
                 *op_type = SHRINK;
