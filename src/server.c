@@ -137,6 +137,9 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->tier_source[TIER_CANDLE_DAY] = sc->candles_day;
     sc->tier_source[TIER_IMBALANCE] = sc->imbalances;
 
+    sc->leg_cost = malloc(sizeof(LegCost));
+    sc->other_leg_cost = malloc(sizeof(LegCost));
+
     return sc;
 }
 
@@ -240,12 +243,12 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
         for (u16 o = 0; o < mbol->order_count; o++){
             if (((MBOEntry*)(mbol->entries + o))->order_id != in->other_id)
                 continue;
-            
+
             // found em
             in_book = 1;
             break;
         }
-            
+
         break;
     }
 
@@ -321,12 +324,83 @@ u8 client_maint_call(ClientSettings* cs, u16 mark) {
     return (cs->cash + lmv - smv) * 100 < gmv * cs->maint_pct;
 }
 
+// how much of a position an order in this direction is allowed to close for free. a close
+// reduces risk and a broker always lets you out, so reg t charges only what opens exposure.
+// a cash account has no such notion - it pays for everything out of the pools it holds
+u32 client_close_q(ClientSettings* cs, u8 direction) {
+    if (cs->is_cash_account)
+        return 0;
+
+    // buying back a short
+    if (direction == 1 && cs->shares < 0)
+        return (u32)(-cs->shares); 
+
+    // selling longs we aren't already quoting
+    if (direction == 0 && cs->shares > (i64)cs->reserved_shares)
+        return (u32)(cs->shares - cs->reserved_shares); 
+
+    return 0;
+}
+
+void leg_walk(LegCost* lc, u8 direction, u8 is_market, u8 is_gtc, u16 price, u32 order_q, MBO* mbo, u32 close_q) {
+    //LegCost lc = { .cost = 0, .open_notional = 0, .q_remain = order_q };
+    lc->cost = 0;
+    lc->open_notional = 0;
+    lc->q_remain = order_q;
+
+    u16 lo_ask_index = mbo->hi_bid_index == MAX_U16 ? 0 : mbo->hi_bid_index + 1;
+
+    if (direction == 1) {
+        for (u16 run = lo_ask_index; run < mbo->level_count; run++) {
+            MBOIndex* mboi = mbo->levels + run;
+            if (!is_market && (lc->q_remain > 0 && price < mboi->price))
+                break;
+
+            u32 take = lc->q_remain < mboi->quantity ? lc->q_remain : mboi->quantity;
+            lc->cost += take * mboi->price;
+
+            u32 closing = take < close_q ? take : close_q;
+            close_q -= closing;
+            lc->open_notional += (u64)(take - closing) * mboi->price;
+
+            lc->q_remain -= take;
+        }
+    } else if (mbo->hi_bid_index != MAX_U16) {
+        // 0-- wraps to MAX_U16, the same "ran off the bottom" sentinel as hi_bid_index
+        for (u16 run = mbo->hi_bid_index; run != MAX_U16; run--) {
+            MBOIndex* mboi = mbo->levels + run;
+            if (!is_market && (lc->q_remain > 0 && price > mboi->price))
+                break;
+
+            u32 take = lc->q_remain < mboi->quantity ? lc->q_remain : mboi->quantity;
+            lc->cost += take; // a sell draws shares, not cash
+
+            u32 closing = take < close_q ? take : close_q;
+            close_q -= closing;
+            lc->open_notional += (u64)(take - closing) * mboi->price;
+
+            lc->q_remain -= take;
+        }
+    }
+
+    // whatever didn't cross rests at the limit, and funds at it. ioc/fok discard it instead
+    if (is_gtc) {
+        lc->cost += direction == 1 ? lc->q_remain * price : lc->q_remain;
+
+        u32 closing = lc->q_remain < close_q ? lc->q_remain : close_q;
+        close_q -= closing;
+        lc->open_notional += (u64)(lc->q_remain - closing) * price;
+    }
+
+    return;// lc;
+}
+
 // the usual stuff
 // 0 if the order can be worked, otherwise why it can't
 // fillable, if non-null, comes back with how much crosses on arrival - the iceberg create
 // path uses it to size a marketable slice. an iceberg prices the whole hidden total here,
 // not just the visible chunk, so the walk covers everything it might cross
-u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares, u32* fillable){
+u8 add_precheck(ServerContext* sc, Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed_cash, u32 reclaimed_shares, u32* fillable){
 
     // 0 - reclaim from cancelled order
     // 1 - figure out full fill "cost"
@@ -365,128 +439,28 @@ u8 add_precheck(Order* in, ClientSettings* cs, MBO* mbo, u16 mark, u32 reclaimed
 
     // walk the whole iceberg total, so fillable reflects everything it could cross
     u32 order_q = is_iceberg ? in->second_quantity : in->quantity;
-    u32 q_remain = order_q;
 
-    // abstract sense of how much it costs to fill the order, either cash or shares
-    u32 cost = 0;
-
-    // on margin, the shares that just close what we already have are exempt from the BP
-    // gate - a close reduces risk, and a broker always lets you out. everything past the
-    // close is opening exposure and gets charged at what it actually fills at. attributed
-    // chunk by chunk down the walk, so no total ever has to be divided back out
-    u32 close_q = 0;
-    if (!cs->is_cash_account) {
-        if (direction == 1 && cs->shares < 0)
-            close_q = (u32)(-cs->shares); // buying back a short
-        else if (direction == 0 && cs->shares > (i64)cs->reserved_shares)
-            close_q = (u32)(cs->shares - cs->reserved_shares); // selling longs we aren't already quoting
-    }
-    u32 open_notional = 0;
-
-    // walk the same levels ob will, so what we charge is what actually fills
-    u16 lo_ask_index = mbo->hi_bid_index == MAX_U16 ? 0 : mbo->hi_bid_index + 1;
-
-    if (direction == 1){
-        for (u16 run = lo_ask_index; run < mbo->level_count; run++) {
-            MBOIndex* mboi = mbo->levels + run;
-            if (!is_market && (q_remain > 0 && price < mboi->price))
-                break;
-
-            if (q_remain < mboi->quantity) {
-                cost += q_remain * mboi->price;
-
-                u32 closing = q_remain < close_q ? q_remain : close_q;
-                close_q -= closing;
-                open_notional += (q_remain - closing) * mboi->price;
-
-                q_remain -= q_remain;
-            } else if (q_remain >= mboi->quantity) {
-                cost += mboi->quantity * mboi->price;
-
-                u32 closing = mboi->quantity < close_q ? mboi->quantity : close_q;
-                close_q -= closing;
-                open_notional += (mboi->quantity - closing) * mboi->price;
-
-                q_remain -= mboi->quantity;
-            }
-        }
-    } else if (mbo->hi_bid_index != MAX_U16){
-        // 0-- wraps to MAX_U16, the same "ran off the bottom" sentinel as hi_bid_index
-        for (u16 run = mbo->hi_bid_index; run != MAX_U16; run--) {
-            MBOIndex* mboi = mbo->levels + run;
-
-            if (!is_market && (q_remain > 0 && price > mboi->price))
-                break;
-
-            if (q_remain < mboi->quantity) {
-                cost += q_remain;
-
-                u32 closing = q_remain < close_q ? q_remain : close_q;
-                close_q -= closing;
-                open_notional += (q_remain - closing) * mboi->price;
-
-                q_remain -= q_remain;
-            } else if (q_remain >= mboi->quantity) {
-                cost += mboi->quantity;
-
-                u32 closing = mboi->quantity < close_q ? mboi->quantity : close_q;
-                close_q -= closing;
-                open_notional += (mboi->quantity - closing) * mboi->price;
-
-                q_remain -= mboi->quantity;
-            }
-        }
-    }
-
+    leg_walk(sc->leg_cost, direction, is_market, is_gtc, price, order_q, mbo, client_close_q(cs, direction));
 
     // whatever the walk consumed crossed on arrival; the rest would rest
     if (fillable)
-        *fillable = order_q - q_remain;
+        *fillable = order_q - sc->leg_cost->q_remain;
 
-    // 2. if liquidity isn't enough branch on GTC/IOC/FOK
-
-    //is_gtc is_ioc is_fok
-
-    if (q_remain) {
-        if (is_gtc) {
-            // we rest the remaining, continue to order book
-        } else if (is_ioc) {
-            // we discard the remaining, continue to order book
-        } else if (is_fok) {
-            // not enough liquidity for full order, drop it
-            // yes put in separate method
-            return CXL_FOK_KILLED;
-        }
-    }
-
-    // 3. if cost is too much, reject
-
-    // if we weant to rest the remainder, then we actually need to add that remainder to the cost
-
-    if (is_gtc){
-        // add the resting cost
-        if (direction == 1)
-            cost += q_remain * in->price;
-        else
-            cost += q_remain;
-
-        u32 closing = q_remain < close_q ? q_remain : close_q;
-        close_q -= closing;
-        open_notional += (q_remain - closing) * in->price;
-    }
-    // for ioc, we just ignore the remaining quantity
+    // an ioc discards what it couldn't fill and a gtc rests it, but a fok has to be whole
+    if (sc->leg_cost->q_remain && is_fok)
+        return CXL_FOK_KILLED;
 
     if (!cs->is_cash_account) {
         // reg t IS the gate, there is no second equity check. equity's job is maintenance
-        if (client_bp(cs, mark, reclaimed_cash, reclaimed_shares) < open_notional)
+        if (client_bp(cs, mark, reclaimed_cash, reclaimed_shares) < sc->leg_cost->open_notional)
             return direction == 1 ? REJ_NO_BUYING_POWER : REJ_NO_SHARES;
     } else if (direction == 1) {
         // we have enough cash to buy
-        if (cs->cash - cs->reserved_cash + reclaimed_cash < cost)
+        if (cs->cash - cs->reserved_cash + reclaimed_cash < sc->leg_cost->cost)
             return REJ_NO_BUYING_POWER;
     } else {
         // we have enough shares to sell
-        if (cs->shares - cs->reserved_shares + reclaimed_shares < cost)
+        if (cs->shares - cs->reserved_shares + reclaimed_shares < sc->leg_cost->cost)
             return REJ_NO_SHARES;
     }
     return REASON_NONE;
@@ -520,7 +494,7 @@ u8 stop_precheck(Order* in) {
     return REASON_NONE;
 }
 
-u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark) {
+u8 canrep_precheck(ServerContext* sc, Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark) {
     // here, we will enforce a valid cancellation
     u8 cancel_reason = cancel_precheck(in, orders, mbo);
     if (cancel_reason)
@@ -548,12 +522,16 @@ u8 canrep_precheck(Order* in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark
             return REASON_NONE;
     }
 
-    return add_precheck(in, cs, mbo, mark, reclaimed_cash, reclaimed_shares, 0);
+    return add_precheck(sc, in, cs, mbo, mark, reclaimed_cash, reclaimed_shares, 0);
 }
 
 // 0 if both legs can be worked, otherwise why they can't. the bid is in the primary
 // fields and the ask in second_*, so this checks the legs against each other too
-u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* mbo) {
+u8 pair_precheck(ServerContext* sc, Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* mbo, u16 mark) {
+    // nothing has printed yet, so mark against what this quote is willing to pay
+    if (mark == 0)
+        mark = in->price;
+
     u8 is_can_rep = (in->status >> CAN_REP_BIT) & 1;
     u8 is_cancel = (in->status >> CANCEL_BIT) & 1;
     u8 ask_is_can_rep = (ask_in->status >> CAN_REP_BIT) & 1;
@@ -611,15 +589,31 @@ u8 pair_precheck(Order* in, Order* ask_in, ClientSettings* cs, FL* orders, MBO* 
         else freed_shares += oc->quantity;
     }
 
-    // bid draws cash, ask draws shares — separate pools, checked independently
+    // the legs don't cross each other, but either one can still cross the book - quote both
+    // sides above the best ask and the bid walks while the ask rests - so each prices the same
+    // way a lone order would. both are limits and both rest what they don't fill
+    leg_walk(sc->leg_cost, 1, 0, 1, in->price, in->quantity, mbo, client_close_q(cs, 1));
+    leg_walk(sc->other_leg_cost, 0, 0, 1, in->second_price, in->second_quantity, mbo, client_close_q(cs, 0));
+
+    // on margin there's one pool behind both legs, so the two charges add and gate once. this
+    // is what lets a flat maker quote two sides: the ask opens a short rather than demanding
+    // shares it doesn't hold. at most one close allowance is live, since shares is one sign
+    if (!cs->is_cash_account) {
+        if (client_bp(cs, mark, freed_cash, freed_shares) < sc->leg_cost->open_notional + sc->other_leg_cost->open_notional)
+            return REJ_NO_BUYING_POWER;
+
+        return REASON_NONE;
+    }
+
+    // cash account: bid draws cash, ask draws shares — separate pools, checked independently
     // signed throughout: a margin loan or a short narrowed to u32 wraps past every check
     i64 bp = (cs->cash - cs->reserved_cash) + freed_cash;
     i64 sh = (cs->shares - cs->reserved_shares) + freed_shares;
 
-    if ((i64)in->quantity * in->price > bp)
+    if ((i64)sc->leg_cost->cost > bp)
         return REJ_NO_BUYING_POWER;
 
-    if ((i64)in->second_quantity > sh)
+    if ((i64)sc->other_leg_cost->cost > sh)
         return REJ_NO_SHARES;
 
     return REASON_NONE;
@@ -871,7 +865,7 @@ void server_auction_order(ServerContext* sc, u32 order_id) {
             return;
         }
         auction_release(sc->client_settings + tgt->client_id, tgt, sc->mark); // give the reserve back
-        // back the cancelled quantity out of the running imbalance
+                                                                              // back the cancelled quantity out of the running imbalance
         if ((tgt->status >> BUY_DIRECTION_BIT) & 1)
             sc->imbalance_buy -= tgt->quantity;
         else
@@ -1399,9 +1393,9 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     if (!sc->is_open) {
         rej_reason = REJ_MARKET_CLOSED;
     } else if (is_pair) {
-        rej_reason = pair_precheck(in, ask_in, cs, orders, (MBO*)old_mbo_raw);
+        rej_reason = pair_precheck(sc, in, ask_in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
     } else if (is_can_rep) {
-        rej_reason = canrep_precheck(in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
+        rej_reason = canrep_precheck(sc, in, cs, orders, (MBO*)old_mbo_raw, sc->mark);
         status |= (1 << CAN_REP_BIT);
         if (is_stop)
             status |= (1 << HAS_STOP_BIT);
@@ -1417,10 +1411,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         // quantity > 0 means there's a NOW half - a real order executing right now, so it
         // validates and funds like one. either half failing rejects the whole message
         if (!rej_reason && in->quantity > 0)
-            rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
+            rej_reason = add_precheck(sc, in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
         status |= (1 << HAS_STOP_BIT);
     } else {
-        rej_reason = add_precheck(in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
+        rej_reason = add_precheck(sc, in, cs, (MBO*)old_mbo_raw, sc->mark, 0, 0, &fillable);
     }
 
     // honestly if we truly have a method that can handle everything, we can send it here
@@ -1668,7 +1662,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // partial id will be filled last by definiton
 
     u32 last_trade_price = MAX_U32;
-    
+
     while (!cb_is_empty(fills)){
         // this guy is actuall responsible for ensuring "orders" fl is updated
 
@@ -1998,14 +1992,14 @@ void server_prune_book(ServerContext* sc) {
     for (u32 i = 0; i < n; i++)
         cb_deque(sc->expire_cb);
 
-    
+
     mbp_derive(sc);
-    
+
 
     //void* new_mbp_raw;
     //u32 next_last_mbp = bs_reserve(sc->mbp_bs, mbp_derive_size(new_mbo_raw), 1, &new_mbp_raw);
     //mbp_derive(new_mbp_raw, new_mbo_raw);
-//
+    //
     //bs_get(sc->mbp_bs, sc->last_mbp);
     //sc->last_mbp = next_last_mbp;
 
@@ -2351,6 +2345,8 @@ void server_free(ServerContext* sc) {
     cb_free(sc->auction_arrivals);
     cb_free(sc->auction_bid_sorted);
     cb_free(sc->auction_ask_sorted);
+    free(sc->leg_cost);
+    free(sc->other_leg_cost);
 
     free(sc->rand);
 

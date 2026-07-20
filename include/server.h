@@ -32,6 +32,16 @@ static const u8 TIER_COUNT = TIER_IMBALANCE + 1;
 // no feed, no ws broadcasts, last trade price only. pays nothing
 static const u8 TIER_FREE = 10;
 
+// what working one leg costs, walking the same levels ob will so what we charge is what 
+// actually fills. cost is the pool a cash account draws from - cash for a buy, shares for a
+// sell. open_notional is the reg t charge: everything past the free close, priced at what it
+// fills or rests at, so no total ever has to be divided back out. q_remain is what would rest 
+typedef struct LegCost {
+    u32 cost;
+    u64 open_notional;
+    u32 q_remain;
+} LegCost;
+
 // basically everything we were holding as locals in src/main
 // bundled into a struct
 // also takes it off the stack and onto the beautiful heap
@@ -134,6 +144,9 @@ typedef struct ServerContext {
     // TIER_COUNT entries mapping a tier to its data structure: a BS* for blob tiers (0-3),
     // a CB* for the trade/candle buffers (4-8). a broadcast response's u8 tier indexes this.
     void** tier_source;
+
+    LegCost* other_leg_cost;
+    LegCost* leg_cost;
 
 } ServerContext;
 

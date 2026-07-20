@@ -866,7 +866,7 @@ void ob_side_range(OBSide* s, FL* orders, MBO* old_mbo, CB* fills) {
 }
 
 // atomic bid + ask replace/cancel. bid is bid_order_id, ask is ask_order_id.
-// requires a non-crossing pair (bid price < ask price, neither leg marketable),
+// requires a non-crossing pair (bid price < ask price, at most one leg marketable),
 // so the two affected ranges stay disjoint with the bid region below the ask region.
 u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, void* new_mbo_raw, CB* fills) {
     MBO* old_mbo = (MBO*)old_mbo_raw;
