@@ -31,6 +31,10 @@ typedef struct ClientSettings {
     i64 shares; // negative = short
     u32 reserved_shares;
 
+    // backstop: earliest self-wake in flight, MAX_U64 for none. a later one is dropped, so pacing
+    // is still the client's job - this only stops a tier from breeding a wake per event
+    u64 next_wake_ns;
+
     u64 initial_wake;
     u64 processing_time;
     u64 net_latency;

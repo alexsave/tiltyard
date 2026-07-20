@@ -32,8 +32,12 @@ int main(int argc, char* argv[]){
     u32 * client_allocations = malloc(tm->IMPLS_COUNT * sizeof(u32*));
 
     // now we can do
-    client_allocations[tm->cz_index] = 1;
-    client_allocations[tm->co_index] = 1;
+    client_allocations[tm->cz_index] = 0;
+    client_allocations[tm->co_index] = 0;
+    // t1 flickerers: 20-50 registered mms in us equities, but only a handful move the
+    // needle - citadel securities ~25% of volume, virtu ~20%, then jane street, jump,
+    // hrt, imc, optiver, two sigma
+    client_allocations[tm->t1_index] = 8;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -84,10 +88,8 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         context->real_time_ns = sch_now_ns(sch);
-        if (context->real_time_ns > 68990* S_TO_NS) {
-            printf("NOW %llu ~%llus - ", context->real_time_ns, context->real_time_ns/1000000000);
-            log_full(next);
-        }
+        printf("NOW %llu ~%llus - ", context->real_time_ns, context->real_time_ns/1000000000);
+        log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
@@ -151,6 +153,13 @@ int main(int argc, char* argv[]){
                 // and this is not in response to an order id 
                 // this just wakes them up
                 context->data_snapshot = 0;
+                // the wake we were holding has landed, so clear before the handler runs and it can
+                // arm the next one. a re-arm leaves the one it beat still in the scheduler, and that
+                // stale ping lands later with nothing pending - the compare keeps it from clearing
+                // a newer wake. a control ack carrying PING_BIT is an order reply, not one of ours
+                if (!((status >> CONTROL_BIT) & 1)
+                        && context->real_time_ns >= client_settings[client_id].next_wake_ns)
+                    client_settings[client_id].next_wake_ns = MAX_U64;
             } else if ((status >> BROADCAST_BIT) & 1) {
                 // market-data push: response.tier picks the source, snapshot_id is the id/offset.
                 // blob tiers resolve with bs_get (move-safe via metadata), buffers with cb_at
@@ -205,10 +214,16 @@ int main(int argc, char* argv[]){
             }
 
             // second bit set, for a wakeup call
+            // only lands if it beats the wake already pending: arming one per event is what breeds
+            // the runaway, but a client that wants up sooner than it asked still gets to. dropped
+            // quietly - it was never an order, so there's nothing to reject or hand back
             if (action & 2) {
                 u64 delay = context->wake_delay_ns; // client chosen
-                uint64_t wake_event = build_event(CONTROL_TYPE, client_id);
-                sch_schedule(sch, wake_event, delay);
+                u64 fire_at = context->real_time_ns + delay;
+                if (fire_at < client_settings[client_id].next_wake_ns) {
+                    client_settings[client_id].next_wake_ns = fire_at;
+                    sch_schedule(sch, build_event(CONTROL_TYPE, client_id), delay);
+                }
             }
 
 

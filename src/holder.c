@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "client.h"
 #include "types.h"
+#include "constants.h"
 #include "holder.h"
 #include "client_settings.h"
 
@@ -25,6 +26,10 @@ Holder* holder_init(TypeMetadata* tm, u32* client_allocations, ClientSettings** 
 
     // ok hear me out
     *client_settings = calloc(num_clients, sizeof(ClientSettings));
+
+    // calloc's 0 would read as "a wake already pending at t=0" and drop every one after it
+    for (u32 c = 0; c < num_clients; c++)
+        (*client_settings)[c].next_wake_ns = MAX_U64;
 
     ho->num_clients = num_clients;
     // probably the biggest memory block in the entire program
