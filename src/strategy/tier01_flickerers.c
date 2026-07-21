@@ -87,6 +87,8 @@ T1* t1_init() {
     t1->ask_price = 0;
     t1->quoted_ns = 0;
     t1->pending = 0;
+    t1->pending_kind = T1_PEND_NONE;
+    t1->pending_id = MAX_U32;
     t1->inventory = 0;
     t1->cash_guess = t1->p.cash;
     t1->last_bid_depth = 0;
@@ -158,37 +160,67 @@ static u8 t1_settle(T1* t1, Context* ctx) {
     u8 is_fill      = (ctx->status >> FILL_BIT) & 1;
     u8 is_partial   = (ctx->status >> PARTIAL_FILL_BIT) & 1;
     u8 is_reject    = (ctx->status >> REJECT_BIT) & 1;
-    u8 is_pair_resp = (ctx->status >> ASK_BID_PAIR_BIT) & 1;
     u8 full_fill    = is_fill && !is_partial;
 
     if (is_ws)
         t1->connected = 1;
 
-    if (is_pair_resp) {
+    // ---- the ack for whatever we last sent ----
+    //
+    // keyed on the message id we kept, not on our resting ids: a cancel's response comes
+    // back under the cancel message's own id and would match neither leg, so keying off
+    // the legs alone means never clearing pending and going silent for good
+    if (t1->pending && ctx->order_id == t1->pending_id) {
+        u8 kind = t1->pending_kind;
         t1->pending = 0;
+        t1->pending_kind = T1_PEND_NONE;
+        t1->pending_id = MAX_U32;
 
-        // the ack for a mass quote. the ask leg's id is minted server side, so this is
-        // the first moment we can possibly know it
-        if (is_reject) {
-            // nothing rested, and main.c has freed the slot
+        if (kind == T1_PEND_PULL) {
+            // both legs are gone whether or not the pull was accepted: if it was rejected
+            // the ids were already stale, which is the only way a valid cancel fails
             t1->bid_id = MAX_U32;
             t1->ask_id = MAX_U32;
-            return 1;
+            return 0;
+        }
+        if (kind == T1_PEND_PULL_BID) {
+            t1->bid_id = MAX_U32;
+            return 0;
+        }
+        if (kind == T1_PEND_PULL_ASK) {
+            t1->ask_id = MAX_U32;
+            return 0;
         }
 
-        t1->bid_id = ctx->order_id;
-        t1->ask_id = ctx->second_order_id;
-        t1->bid_price = ctx->price;
-        t1->ask_price = ctx->second_price;
-        t1->quoted_ns = ctx->real_time_ns;
+        if (kind == T1_PEND_QUOTE) {
+            if (is_reject) {
+                // nothing rested, and main.c has freed the slot
+                t1->bid_id = MAX_U32;
+                t1->ask_id = MAX_U32;
+                return 1;
+            }
 
-        // a pair cannot cross on entry, but settle anything reported anyway
-        t1->inventory += (i64)ctx->quantity_filled;
-        t1->cash_guess -= (i64)ctx->quantity_filled * (i64)ctx->price;
-        t1->inventory -= (i64)ctx->second_quantity_filled;
-        t1->cash_guess += (i64)ctx->second_quantity_filled * (i64)ctx->second_price;
-        return 0;
+            // the ask leg's id is minted server side, so this is the first moment we can
+            // possibly know it
+            t1->bid_id = ctx->order_id;
+            t1->ask_id = ctx->second_order_id;
+            t1->bid_price = ctx->price;
+            t1->ask_price = ctx->second_price;
+            t1->quoted_ns = ctx->real_time_ns;
+
+            // a pair cannot cross on entry, but settle anything reported anyway
+            t1->inventory += (i64)ctx->quantity_filled;
+            t1->cash_guess -= (i64)ctx->quantity_filled * (i64)ctx->price;
+            t1->inventory -= (i64)ctx->second_quantity_filled;
+            t1->cash_guess += (i64)ctx->second_quantity_filled * (i64)ctx->second_price;
+            return 0;
+        }
+
+        // a ws / ping ack. nothing of ours rested
+        return is_reject;
     }
+
+    // ---- an unsolicited report on a quote already resting: someone traded with us ----
 
     if (t1->bid_id != MAX_U32 && ctx->order_id == t1->bid_id) {
         if (is_fill) {
@@ -314,30 +346,36 @@ static void t1_target_quote(T1* t1, Context* ctx, u32 ref, T1Quote* q) {
     q->want_ask_side = t1->inventory > -(i64)t1->p.inventory_limit;
 }
 
+// remember the message we just handed over, so its ack can be matched and read
+static u8 t1_await(T1* t1, Context* ctx, u8 kind) {
+    t1->pending = 1;
+    t1->pending_kind = kind;
+    t1->pending_id = ctx->next_order_id;
+    return 1;
+}
+
 // both quotes down in one atomic book pass - the pull a maker actually wants
-static u8 t1_send_pull(T1* t1, Order* out) {
+static u8 t1_send_pull(T1* t1, Context* ctx, Order* out) {
     out->status = (1 << ASK_BID_PAIR_BIT) | (1 << BUY_DIRECTION_BIT) | (1 << CANCEL_BIT);
     out->other_id = t1->bid_id;
     out->second_id = t1->ask_id;
-    t1->pending = 1;
-    return 1;
+    return t1_await(t1, ctx, T1_PEND_PULL);
 }
 
 // exactly one leg resting means an ack raced a fill. pull the survivor on its own, so we
 // never end up running two bids or two asks
-static u8 t1_send_pull_stray(T1* t1, Order* out) {
+static u8 t1_send_pull_stray(T1* t1, Context* ctx, Order* out) {
     u8 pulling_bid = t1->bid_id != MAX_U32;
     out->status = (1 << CANCEL_BIT) | (pulling_bid ? (1 << BUY_DIRECTION_BIT) : 0);
     out->other_id = pulling_bid ? t1->bid_id : t1->ask_id;
     out->price = pulling_bid ? t1->bid_price : t1->ask_price;
-    t1->pending = 1;
-    return 1;
+    return t1_await(t1, ctx, pulling_bid ? T1_PEND_PULL_BID : T1_PEND_PULL_ASK);
 }
 
 // a fresh two-sided quote, or - with CAN_REP_BIT - both old quotes out and both new ones
 // in atomically. as two separate orders there is a window where we are one-sided at a
 // price we no longer believe
-static u8 t1_send_quote(T1* t1, Order* out, T1Quote* q, u8 replacing) {
+static u8 t1_send_quote(T1* t1, Context* ctx, Order* out, T1Quote* q, u8 replacing) {
     out->status = (1 << ASK_BID_PAIR_BIT) | (1 << BUY_DIRECTION_BIT) |
                   (replacing ? (1 << CAN_REP_BIT) : 0);
     if (replacing) {
@@ -348,8 +386,7 @@ static u8 t1_send_quote(T1* t1, Order* out, T1Quote* q, u8 replacing) {
     out->quantity = q->bid_qty;
     out->second_price = q->ask;
     out->second_quantity = q->ask_qty;
-    t1->pending = 1;
-    return 1;
+    return t1_await(t1, ctx, T1_PEND_QUOTE);
 }
 
 // our quote is resting and we have decided to replace it. before sending, look at how
@@ -396,7 +433,7 @@ static u8 t1_maintain_quote(T1* t1, Context* ctx, T1Book* b, T1Quote* q, Order* 
     }
 
     t1_apply_queue_slip(t1, b, q);
-    return t1_send_quote(t1, out, q, 1);
+    return t1_send_quote(t1, ctx, out, q, 1);
 }
 
 u8 t1_on_snapshot(T1* t1, Context* ctx) {
@@ -413,8 +450,7 @@ u8 t1_on_snapshot(T1* t1, Context* ctx) {
     // works in any session phase - we can be on the feed well before the bell
     if (!t1->connected) {
         out->status |= (1 << WS_BIT);
-        t1->pending = 1;
-        return 1;
+        return t1_await(t1, ctx, T1_PEND_WS);
     }
 
     // a quote of ours is still in flight. sending another mints ids we can never cancel -
@@ -439,15 +475,15 @@ u8 t1_on_snapshot(T1* t1, Context* ctx) {
 
     // at a cap on either side: take the whole quote down
     if (!quote.want_bid_side || !quote.want_ask_side)
-        return resting ? t1_send_pull(t1, out) : t1_sleep(ctx, t1->p.idle_wake_ns);
+        return resting ? t1_send_pull(t1, ctx, out) : t1_sleep(ctx, t1->p.idle_wake_ns);
 
     if (resting)
         return t1_maintain_quote(t1, ctx, &book, &quote, out);
 
     if (t1->bid_id != MAX_U32 || t1->ask_id != MAX_U32)
-        return t1_send_pull_stray(t1, out);
+        return t1_send_pull_stray(t1, ctx, out);
 
-    return t1_send_quote(t1, out, &quote, 0);
+    return t1_send_quote(t1, ctx, out, &quote, 0);
 }
 
 void t1_get_settings(T1* t1, ClientSettings* client_settings) {

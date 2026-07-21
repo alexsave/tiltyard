@@ -12,6 +12,15 @@
 // every behavioural knob lives in T1Params so a sweep harness can vary it without
 // touching this file. ALL DEFAULTS ARE /* UNCALIBRATED */ PLACEHOLDERS.
 
+// what the message we are waiting on was, so its ack can be read correctly. a pair ack
+// looks identical for a new quote and for a pull - only we know which one we sent
+#define T1_PEND_NONE      0
+#define T1_PEND_WS        1
+#define T1_PEND_QUOTE     2  // post or replace: the ack carries our new resting ids
+#define T1_PEND_PULL      3  // atomic two-sided cancel: both legs gone
+#define T1_PEND_PULL_BID  4  // single stray leg cancel
+#define T1_PEND_PULL_ASK  5
+
 typedef struct T1Params {
     // core quote shape
     u16 quote_size;               // shares per side. NOT derived from inventory
@@ -64,9 +73,13 @@ typedef struct T1 {
     u16 ask_price;
     u64 quoted_ns;
 
-    // a pair mints the ask id server-side, so we do not know it until the ack lands.
-    // do not send another quote while this is set, or we spam ids we can never cancel
+    // what we sent and have not heard back about. a response is keyed by the id of the
+    // MESSAGE, not of the order it acts on - a cancel comes back under the cancel's own id,
+    // never the target's - so matching on the resting ids alone silently misses every
+    // cancel ack and leaves us pending forever. remember the message and what it meant
     u8 pending;
+    u8 pending_kind;   // T1_PEND_*
+    u32 pending_id;
 
     // our own books. the engine will not tell us, so we track what we sent and got
     i64 inventory;

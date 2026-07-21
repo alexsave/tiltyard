@@ -38,6 +38,9 @@ int main(int argc, char* argv[]){
     // needle - citadel securities ~25% of volume, virtu ~20%, then jane street, jump,
     // hrt, imc, optiver, two sigma
     client_allocations[tm->t1_index] = 8;
+    // t2 snipers: nasdaq's hft dataset identifies ~120 firms; heavily overlapping t1, since
+    // the same desks often run both sides. 12 is that overlap plus a few pure takers
+    client_allocations[tm->t2_index] = 12;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -48,7 +51,7 @@ int main(int argc, char* argv[]){
     sch_schedule(sch, repeat_event, 0);
 
     u64 kill_event = build_event(CONTROL_TYPE, CONTROL_PARAM_KILL);
-    sch_schedule(sch, kill_event, 2 * DAY_TO_NS);
+    sch_schedule(sch, kill_event, 40 * DAY_TO_NS);
 
     u64 news_event = build_event(CONTROL_TYPE, CONTROL_PARAM_NEWS);
     sch_schedule(sch, news_event, 7 * DAY_TO_NS);
