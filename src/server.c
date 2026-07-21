@@ -553,6 +553,12 @@ u8 pair_precheck(ServerContext* sc, Order* in, Order* ask_in, ClientSettings* cs
     if (ask_cancel_reason)
         return ask_cancel_reason;
 
+    // both legs naming the same resting order is not two cancels, it is one asked for twice:
+    // each leg's precheck ran before either wiped anything, so both pass, and ob_pair then
+    // splices the same book entry out twice and overruns the size we reserved for the snapshot
+    if ((is_can_rep | is_cancel) && (ask_is_can_rep | is_cancel) && in->other_id == ask_in->other_id)
+        return REJ_BAD_QUALIFIER;
+
     // the pair book op can only splice book residents, so neither leg may pull a stop
     if ((is_can_rep | is_cancel) && ((((Order*)fl_get(orders, in->other_id))->status >> HAS_STOP_BIT) & 1))
         return REJ_BAD_QUALIFIER;
