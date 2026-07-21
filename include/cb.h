@@ -8,16 +8,18 @@
 // fixed sized free list
 
 
-// 2^16 - 1
-static const uint16_t INITIAL_START_INDEX = (uint16_t)65535;
+// empty sentinel: must be an out-of-range index. capacity can now grow past 64K,
+// so 65535 would collide with a real slot — use the u32 max instead.
+static const u32 INITIAL_START_INDEX = (u32)0xFFFFFFFF;
 
 static const u32 CB_INITIAL_CAPACITY = 1024;
 
-// this only supports 16K snapshots, which may be enough
+// start/end/capacity are u32: the trade tape is append-only (never dequeued) and a
+// busy 40-day run needs ~180k entries, well past what u16 (max 65535) could address.
 typedef struct CB {
-    u16 start;
-    u16 end;
-    u16 capacity;
+    u32 start;
+    u32 end;
+    u32 capacity;
     u16 type_size;
     u8* buffer;
 } CB;

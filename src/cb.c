@@ -15,7 +15,7 @@ CB* cb_init(u16 type_size) {
     cb->capacity = CB_INITIAL_CAPACITY;
     cb->type_size = type_size;
 
-    cb->buffer = malloc(cb->capacity * type_size);
+    cb->buffer = malloc((u32)cb->capacity * type_size);
 
     return cb;
 }
