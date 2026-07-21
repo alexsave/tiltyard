@@ -742,6 +742,14 @@ u16 ob_op_level_delta(u8 op_type) {
     return op_type != EXACT && op_type != CAN_WIPE;
 }
 
+// does the op's affected range [lui, hui] cover old level `idx`? all three are u16-modular:
+// a pure insertion has lui == hui + 1 and covers nothing, and hui may be the MAX_U16 sentinel
+// for "one before level 0". the subtraction keeps both cases honest where a signed compare
+// would not - an empty range gives length 0, so nothing reads as covered
+u8 ob_op_covers(u16 idx, u16 lui, u16 hui) {
+    return (u16)(idx - lui) < (u16)(hui - lui + 1);
+}
+
 // copy old levels [from, to) into new, splicing out any watched cancel that shows up
 // (up to two, so the pair can watch both the bid and ask cancels in one pass)
 void ob_copy_range(MBORunner* old, MBORunner* new, u16 from, u16 to, OBSide** sides, u8 n_sides) {
@@ -782,7 +790,9 @@ u16 ob_apply_op(OBSide* s, MBO* old_mbo, MBORunner* old_runner, MBORunner* new_r
     u16 cancel_index = s->cancel_index;
     u8 cancel_was_sole = s->cancel_was_sole;
 
-    u16 hbi;
+    // default to the old boundary: every branch that does not move it wants exactly this,
+    // and an unhandled op_type returns a stale-but-valid index instead of stack garbage
+    u16 hbi = old_mbo->hi_bid_index;
 
     if (op_type == NEW){
         hbi = old_mbo->hi_bid_index;
@@ -796,10 +806,12 @@ u16 ob_apply_op(OBSide* s, MBO* old_mbo, MBORunner* old_runner, MBORunner* new_r
         // old not relevant
         mbo_insert_level(new_runner, order_id, price, quantity);
     } else if (op_type == APPEND) {
-        if (hbi != MAX_U16 && is_can_rep && cancel_was_sole && cancel_index <= old_mbo->hi_bid_index)
-            hbi = old_mbo->hi_bid_index - 1;
-        else
-            hbi = old_mbo->hi_bid_index;
+        // read hbi before assigning it and the guard is testing whatever was on the stack.
+        // same retreat as NEW, just joining a level instead of making one, so no ++
+        hbi = old_mbo->hi_bid_index;
+
+        if (hbi != MAX_U16 && is_can_rep && cancel_was_sole && cancel_index <= hbi)
+            hbi--;
 
         // old already in correct position
         mbo_copy_level(old_runner, new_runner);
@@ -894,13 +906,18 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
                     + ob_op_level_delta(ask.op_type)
                     + (old_mbo->level_count - ask.hui - 1);
 
-    // a sole cancel sitting in a copy region gets dropped, so it's one fewer level
-    if ((bid.is_can_rep | bid.is_cancel) && bid.cancel_was_sole
-            && (bid.cancel_index < bid.lui || bid.cancel_index > bid.hui))
-        level_count--;
-    if ((ask.is_can_rep | ask.is_cancel) && ask.cancel_was_sole
-            && (ask.cancel_index < ask.lui || ask.cancel_index > ask.hui))
-        level_count--;
+    // a sole cancel only costs a level if ob_copy_range is the one that would have carried it:
+    // inside either op's range the op already decides that level's fate, and the deltas above
+    // have counted it. checking only the cancel's own side double-drops a bid whose level the
+    // ask op consumed, and a pure insertion (empty range, hui = MAX_U16) covers nothing at all
+    u8 bid_cancel_drops = (bid.is_can_rep | bid.is_cancel) && bid.cancel_was_sole
+            && !ob_op_covers(bid.cancel_index, bid.lui, bid.hui)
+            && !ob_op_covers(bid.cancel_index, ask.lui, ask.hui);
+    u8 ask_cancel_drops = (ask.is_can_rep | ask.is_cancel) && ask.cancel_was_sole
+            && !ob_op_covers(ask.cancel_index, bid.lui, bid.hui)
+            && !ob_op_covers(ask.cancel_index, ask.lui, ask.hui);
+
+    level_count -= bid_cancel_drops + ask_cancel_drops;
 
     new_mbo->level_count = level_count;
 
@@ -928,11 +945,24 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
     u16 bids = bid.lui
              + (bid.op_type != FILL_SOME && ob_op_level_delta(bid.op_type))
              + (ask.op_type == FILL_SOME);
+    // the middle is old [bid.hui + 1, ask.lui), in the same u16-modular index arithmetic the
+    // copy ranges above use - a bid op resting under the whole book carries hui = MAX_U16, so
+    // the +1 wraps to 0. widening to int instead loses that and buries the count
     if (old_hbi != MAX_U16) {
-        int cap = (int)ask.lui - 1;            // last middle index
-        if ((int)old_hbi < cap) cap = old_hbi; // ...but only bids count
-        int mid_bids = cap - (int)bid.hui;
-        if (mid_bids > 0) bids += mid_bids;
+        u16 mid_lo = bid.hui + 1;
+        u16 mid_len = ask.lui - mid_lo;
+        if (mid_len && old_hbi >= mid_lo) {
+            u16 mid_bids = old_hbi - mid_lo + 1;
+            bids += mid_bids < mid_len ? mid_bids : mid_len;
+        }
+
+        // the same drops the level_count adjustment above makes: a copy-region level that goes
+        // away was counted as a bid up there if it sat at or below the old boundary. either leg
+        // can be cancelling either side - cancel_precheck only proved it was ours and resting
+        if (bid_cancel_drops && bid.cancel_index <= old_hbi)
+            bids--;
+        if (ask_cancel_drops && ask.cancel_index <= old_hbi)
+            bids--;
     }
     new_mbo->hi_bid_index = bids ? bids - 1 : MAX_U16;
 
@@ -1016,6 +1046,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     new_mbo->hi_bid_index = hbi;
     if (new_mbo->level_count == 0)
         new_mbo->hi_bid_index = MAX_U16;
+
     // then do some calculation like
     return ((void*)(new_runner->level)) - new_mbo_raw;
 }
