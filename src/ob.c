@@ -193,39 +193,53 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
     u8 partial_fill = 0;
 
     u16 i = 0;
-    for (; i < mod_level->order_count; i++) {
+    // a spent taker takes nothing, so don't walk the level at all. the partial test inside is
+    // `order_quantity > remaining_quantity`, which any live order passes once remaining is 0
+    if (remaining_quantity > 0) {
+        for (; i < mod_level->order_count; i++) {
 
-        // that's what we USED to do. but really we just modify the order book here
-        // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the order themselves
-        // which also solves the whole partial thing
+            // that's what we USED to do. but really we just modify the order book here
+            // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the order themselves
+            // which also solves the whole partial thing
 
-        MBOEntry * prev_order = mod_level->entries + i;
-        u32 prev_order_id = prev_order->order_id;
+            MBOEntry * prev_order = mod_level->entries + i;
+            u32 prev_order_id = prev_order->order_id;
 
-        if (prev_order_id == cancel_id)
-            continue;
+            if (prev_order_id == cancel_id)
+                continue;
 
-        u32 order_quantity = prev_order->quantity;
+            u32 order_quantity = prev_order->quantity;
 
-        if (order_quantity > remaining_quantity) {
-            //prev_order->quantity -= remaining_quantity;
-            Fill f = {
-                .order_id = prev_order_id, 
-                .quantity_filled = remaining_quantity, 
-                .partial = 1};
-            cb_queue(fills, &f);
-            //printf("a filling %u\n", prev_order_id);
-            partial_fill = 1;
-            break;
-        } else {
-            // fill resting order entirely
-            remaining_orders_on_level--;
-            remaining_quantity -= order_quantity;
-            Fill f = {
-                .order_id = prev_order_id, 
-                .quantity_filled = order_quantity};
-            cb_queue(fills, &f);
-            //printf("b filling %u\n", prev_order_id);
+            if (order_quantity > remaining_quantity) {
+                //prev_order->quantity -= remaining_quantity;
+                Fill f = {
+                    .order_id = prev_order_id,
+                    .quantity_filled = remaining_quantity,
+                    .partial = 1};
+                cb_queue(fills, &f);
+                //printf("a filling %u\n", prev_order_id);
+                partial_fill = 1;
+                break;
+            } else {
+                // fill resting order entirely
+                remaining_orders_on_level--;
+                remaining_quantity -= order_quantity;
+                Fill f = {
+                    .order_id = prev_order_id,
+                    .quantity_filled = order_quantity};
+                cb_queue(fills, &f);
+                //printf("b filling %u\n", prev_order_id);
+
+                // spent exactly on this boundary - the only place remaining can reach 0, so it
+                // is the only place worth testing. stepping to the next order would report a
+                // zero-share fill against one we never touched. the i++ stands in for the one
+                // the loop step would have done, since the tail copy below reads i as the first
+                // entry that survives whole
+                if (remaining_quantity == 0) {
+                    i++;
+                    break;
+                }
+            }
         }
     }
 
