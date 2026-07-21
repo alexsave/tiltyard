@@ -9,13 +9,15 @@
 #include "strategy/client_one.h"
 #include "strategy/tier01_flickerers.h"
 #include "strategy/tier02_snipers.h"
+#include "strategy/tier03_slicers.h"
 
 // just add more as you wish :)
 #define IMPLS \
     X(cz) \
     X(co) \
     X(t1) \
-    X(t2)
+    X(t2) \
+    X(t3)
 
 // THIS WHOLE THING needs to be passed around
 

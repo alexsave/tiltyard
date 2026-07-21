@@ -56,6 +56,15 @@ typedef struct T2Params {
     i32 flatten_threshold;
     u16 flatten_urgency_ticks;  // ticks through the touch we will pay to get flat
 
+    // how long we will carry a position before getting out REGARDLESS of fair value.
+    //
+    // the fair-value gate on the flatten stops the money pump, but on its own it also means
+    // a position the market has moved away from is held forever - and this tier's whole
+    // premise is a short-horizon edge, not a view worth warehousing. without a time stop
+    // every sniper ends up pinned at max_position, unable to add and unwilling to exit,
+    // which removes the arresting force that pulls price back toward fair value
+    u64 max_hold_ns;
+
     // no book, no signal, nothing to do - come back later
     u64 idle_wake_ns;
     u64 retry_wake_ns;
@@ -81,6 +90,9 @@ typedef struct T2 {
     // never anything of ours resting to track - only the shot we are waiting to hear about.
     // the fill response carries no direction, so we have to remember which way we fired
     u8 pending;
+
+    // when we last went from flat to holding something, for the time stop
+    u64 position_since_ns;
     u8 pending_buy;
     u32 shot_id;
 

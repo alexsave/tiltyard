@@ -58,6 +58,7 @@ static T2Params t2_defaults() {
     // immediately trip the flatten and the tier would never hold a position at all
     p.flatten_threshold           = 800;    /* UNCALIBRATED */
     p.flatten_urgency_ticks       = 1;      /* UNCALIBRATED */
+    p.max_hold_ns                 = 30 * MIN_TO_NS; /* UNCALIBRATED */
 
     p.idle_wake_ns                = 1 * S_TO_NS;   /* UNCALIBRATED */
     p.retry_wake_ns               = 1 * MIN_TO_NS; /* UNCALIBRATED */
@@ -84,6 +85,7 @@ T2* t2_init() {
     t2->p = t2_defaults();
 
     t2->pending = 0;
+    t2->position_since_ns = 0;
     t2->pending_buy = 0;
     t2->shot_id = MAX_U32;
     t2->inventory = 0;
@@ -139,6 +141,10 @@ static u8 t2_settle(T2* t2, Context* ctx) {
 
     if (t2->shot_id != MAX_U32 && ctx->order_id == t2->shot_id) {
         if (is_fill) {
+            // the time stop runs from when we went flat -> holding, so a position that
+            // keeps being added to does not keep resetting its own clock
+            i64 before = t2->inventory;
+
             // an ioc reports its fill and keeps nothing back, so this is the whole trade.
             // direction is ours to remember - the response does not carry it
             if (t2->pending_buy) {
@@ -148,6 +154,11 @@ static u8 t2_settle(T2* t2, Context* ctx) {
                 t2->inventory -= (i64)ctx->quantity_filled;
                 t2->cash_guess += (i64)ctx->quantity_filled * (i64)ctx->price;
             }
+
+            if (before == 0 && t2->inventory != 0)
+                t2->position_since_ns = ctx->real_time_ns;
+            else if (t2->inventory == 0)
+                t2->position_since_ns = 0;
         }
 
         t2->pending = 0;
@@ -317,10 +328,17 @@ static u8 t2_find_edge(T2* t2, T2Book* b, u32 fv, T2Shot* shot) {
 // buys the ask, immediately sells the bid a spread lower, and repeats until the book is on
 // the floor. so we only flatten into a touch that has come back to fair value, and
 // otherwise hold and wait for one that does
-static u8 t2_find_flatten(T2* t2, T2Book* b, u32 fv, T2Shot* shot) {
-    if (t2->inventory >= (i64)t2->p.flatten_threshold && b->have_bid) {
+static u8 t2_find_flatten(T2* t2, Context* ctx, T2Book* b, u32 fv, T2Shot* shot) {
+    // held too long: the edge we came for has not shown up, so stop waiting for it. past
+    // the time stop we get out at whatever the touch is, fair value or not - carrying a
+    // position for days is a different business than the one this tier is in
+    u8 timed_out = t2->inventory != 0 && t2->position_since_ns != 0 &&
+                   (ctx->real_time_ns - t2->position_since_ns) >= t2->p.max_hold_ns;
+
+    if ((t2->inventory >= (i64)t2->p.flatten_threshold || (timed_out && t2->inventory > 0))
+        && b->have_bid) {
         // long: sell into the bid, but only at or above what we think it is worth
-        if (2u * (u32)b->best_bid < fv)
+        if (!timed_out && 2u * (u32)b->best_bid < fv)
             return 0;
 
         shot->buy = 0;
@@ -332,9 +350,10 @@ static u8 t2_find_flatten(T2* t2, T2Book* b, u32 fv, T2Shot* shot) {
         return 1;
     }
 
-    if (t2->inventory <= -(i64)t2->p.flatten_threshold && b->have_ask) {
+    if ((t2->inventory <= -(i64)t2->p.flatten_threshold || (timed_out && t2->inventory < 0))
+        && b->have_ask) {
         // short: buy it back, but only at or below fair value
-        if (2u * (u32)b->best_ask > fv)
+        if (!timed_out && 2u * (u32)b->best_ask > fv)
             return 0;
 
         shot->buy = 1;
@@ -414,7 +433,7 @@ u8 t2_on_snapshot(T2* t2, Context* ctx) {
     if (t2_find_edge(t2, &book, fv, &shot))
         return t2_send_shot(t2, ctx, out, &shot);
 
-    if (t2_find_flatten(t2, &book, fv, &shot))
+    if (t2_find_flatten(t2, ctx, &book, fv, &shot))
         return t2_send_shot(t2, ctx, out, &shot);
 
     return t2_sleep(ctx, t2->p.idle_wake_ns);

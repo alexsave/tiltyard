@@ -41,6 +41,9 @@ int main(int argc, char* argv[]){
     // t2 snipers: nasdaq's hft dataset identifies ~120 firms; heavily overlapping t1, since
     // the same desks often run both sides. 12 is that overlap plus a few pure takers
     client_allocations[tm->t2_index] = 12;
+    // t3 slicers: ~100s of algo providers and ~1000s of systematic funds, but the unit that
+    // matters is parent orders in flight, not firms - one desk runs many at once
+    client_allocations[tm->t3_index] = 40;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -91,8 +94,10 @@ int main(int argc, char* argv[]){
         uint64_t next = sch_pop(sch);
 
         context->real_time_ns = sch_now_ns(sch);
-        printf("NOW %llu ~%llus - ", context->real_time_ns, context->real_time_ns/1000000000);
-        log_full(next);
+        // per-event trace. one line per scheduler pop, so it dwarfs everything else once the
+        // book is actually busy - 25GB by sim day 11 with the T3 population in
+        //printf("NOW %llu ~%llus - ", context->real_time_ns, context->real_time_ns/1000000000);
+        //log_full(next);
 
         uint8_t type = (next >> PARAM_BITS) & T_MASK;
 
