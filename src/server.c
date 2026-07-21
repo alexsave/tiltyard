@@ -1833,15 +1833,20 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         }
 
         cancelled->quantity = 0;
-        // should probably release too?
-        // or should the client receive notification of this, like a fill?
-        // no - this call succeeding implies it went through
+        // the client is never told about this one - the canrep/cancel ack it does get is about
+        // the new order - so nobody downstream is going to hand the slot back for us. ob_canrep
+        // above already spliced it out of the book, so this is the last reference to it
+        cancelled->status |= (1 << REJECT_BIT);
+        fl_release(orders, in->other_id);
     }
 
     // the block above retired the bid's replaced order; do the same for the ask leg.
     // ask_is_can_rep is the replace case, is_cancel the pull-both-quotes case
     if (is_pair && (ask_is_can_rep | is_cancel)) {
         Order* old_ask = (Order*)fl_get(orders, ask_in->other_id);
+
+        // a pair naming the same order in both legs passes both prechecks and lands here twice
+        u8 already_retired = (old_ask->status >> REJECT_BIT) & 1;
 
         // normally a sell, but dont assume - cancel_precheck only proved it was ours and resting
         if ((old_ask->status >> BUY_DIRECTION_BIT) & 1)
@@ -1850,6 +1855,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             cs->reserved_shares -= old_ask->quantity;
 
         old_ask->quantity = 0;
+        old_ask->status |= (1 << REJECT_BIT);
+        // releasing twice would put the id in the free stack twice, and it would later be minted
+        // to two live owners at once - fl_release does not refuse this, so the guard is here
+        if (!already_retired)
+            fl_release(orders, ask_in->other_id);
     }
 
     // ok unfortunately we do need to do a a few assertions to make sure of stuff before we refactor

@@ -6,6 +6,11 @@
 
 // fixed sized free list
 
+// TODO: no occupancy tracking. the stack cannot tell you whether an id is already free, so a
+// double release pushes it twice and fl_insert later mints it to two live owners at once, who
+// then silently share a slot. the check in fl_release only catches sp==0/out of range, and it
+// prints without returning. wants a u8 live[] per slot (set on insert, cleared on release,
+// refuse if already clear). until then every release site has to prove it can only run once
 typedef struct FL {
     u32 sp;
     u32* stack;
