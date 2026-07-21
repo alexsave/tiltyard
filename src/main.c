@@ -44,6 +44,9 @@ int main(int argc, char* argv[]){
     // t3 slicers: ~100s of algo providers and ~1000s of systematic funds, but the unit that
     // matters is parent orders in flight, not firms - one desk runs many at once
     client_allocations[tm->t3_index] = 40;
+    // t4 suits: ~32k hedge funds worldwide but ~550 firms hold 86% of the capital, so the
+    // handful that move a name is low hundreds. the informed flow - trades toward fundamental
+    client_allocations[tm->t4_index] = 60;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -196,20 +199,28 @@ int main(int argc, char* argv[]){
             context->next_wake_ns = client_settings[client_id].next_wake_ns;
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 
-            // ok they read the response order id, if it's rejected free it as its useless
-            // a ping/ws ack never reached the book either, so it frees the same way
-            if (((context->status >> REJECT_BIT) & 1) || ((context->status >> CONTROL_BIT) & 1)) {
+            // they've read the response order id, so hand its slot back for any terminal
+            // outcome that left nothing resting in the book under that id:
+            //  - rejected, or a ping/ws control ack: the message never reached the book
+            //  - fully filled as a taker: consumed on arrival, no residual rests
+            //  - a pure cancel/pull: the target it names is freed server-side; the cancel
+            //    message itself rests nothing, so its own slot has to come back here too.
+            // a canrep is the exception - it carries CAN_REP_BIT and its new leg rests under
+            // this same id, so it is freed later when that leg is cancelled/filled, not now.
+            u8 rested_nothing_cancel = ((status >> CANCEL_BIT) & 1) && !((status >> CAN_REP_BIT) & 1);
+            u8 terminal = ((status >> REJECT_BIT) & 1)
+                | ((status >> CONTROL_BIT) & 1)
+                | (((status >> FILL_BIT) & 1) && !((status >> PARTIAL_FILL_BIT) & 1))
+                | rested_nothing_cancel;
+            if (terminal)
                 fl_release(orders, response.order_id);
-            }
 
-            // or an order was filled, in which case we can also free it now that they've read it
-
-            if ((status >> FILL_BIT) & 1){
-                if ((status >> PARTIAL_FILL_BIT) & 1) {
-                } else {
-                    fl_release(orders, response.order_id);
-                }
-            }
+            // a pulled two-sided quote retires two message slots at once: the ask leg was
+            // materialized as its own order and, being a cancel too, also rests nothing - it
+            // rode back under second_order_id. (a resting quote carries no cancel bit, so its
+            // legs are left in place to be freed when they are each later cancelled.)
+            if (rested_nothing_cancel && ((status >> ASK_BID_PAIR_BIT) & 1))
+                fl_release(orders, response.second_order_id);
 
             if (action & 1){
                 empty->client_id = client_id;
