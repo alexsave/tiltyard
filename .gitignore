@@ -5,3 +5,4 @@ tiltyard
 *.dSYM
 f
 **/*.DS_Store
+*.d
