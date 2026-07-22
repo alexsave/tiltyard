@@ -47,6 +47,12 @@ int main(int argc, char* argv[]){
     // t4 suits: ~32k hedge funds worldwide but ~550 firms hold 86% of the capital, so the
     // handful that move a name is low hundreds. the informed flow - trades toward fundamental
     client_allocations[tm->t4_index] = 60;
+    // t5 degens: ~450k active US day traders; doc says 100s-1000s in sim. momentum retail -
+    // the crash amplifier, and the protective-sell-stop population that fuels the cascade
+    client_allocations[tm->t5_index] = 0;
+    // t9 oracles: true value pickers are professionally rare, doc says 10s-100s. deep
+    // contrarian capital anchored to fundamental - THE arresting loop, the crash floor
+    client_allocations[tm->t9_index] = 30;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -164,6 +170,12 @@ int main(int argc, char* argv[]){
                 // and this is not in response to an order id 
                 // this just wakes them up
                 context->data_snapshot = 0;
+                // schedule_response pinned the current mbo (snapshot_id) for every response it
+                // sends; a ping ignores the book but must still hand that ref back, or the
+                // snapshot never reaches zero refs and the blob-store ring fills to its cap.
+                // a self-wake ping (snapshot_id == MAX_U32) never took a ref, so leave it alone
+                if (snapshot_id != MAX_U32)
+                    bs_get(mbo_bs, snapshot_id);
                 // the wake we were holding has landed, so clear before the handler runs and it can
                 // arm the next one. a re-arm leaves the one it beat still in the scheduler, and that
                 // stale ping lands later with nothing pending - the compare keeps it from clearing
@@ -180,7 +192,9 @@ int main(int argc, char* argv[]){
                     context->data_snapshot = cb_at((CB*)sc->tier_source[response.tier], snapshot_id);
                 context->order_id = response.order_id;
             } else if (client_settings[client_id].sub_tier == TIER_FREE) {
-                // free tier gets no book, just the last trade price already on the context
+                // free tier gets no book, just the last trade price already on the context -
+                // but still release the mbo ref schedule_response took, same as every other path
+                bs_get(mbo_bs, snapshot_id);
                 context->data_snapshot = 0;
                 context->order_id = response.order_id;
             } else {
@@ -270,7 +284,11 @@ int main(int argc, char* argv[]){
 
                 // idk I feel like this makes more sense as a response type
 
-                Response r = {.client_id = client_id, .status = 1 << PING_BIT};
+                // this self-wake ping is minted here, NOT through schedule_response, so it never
+                // pinned an mbo snapshot. mark snapshot_id as "none" (MAX_U32) so the read side
+                // knows not to release an mbo ref it never took - dropping one would free the live
+                // current book out from under the next order's derivation
+                Response r = {.client_id = client_id, .status = 1 << PING_BIT, .snapshot_id = MAX_U32};
                 u32 response_id = fl_insert(responses, &r);
                 u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
                 // really not sure about the delay here tbh
