@@ -84,11 +84,11 @@ uint32_t fl_insert(FL* fl, void* data) {
 
     uint32_t id = fl->stack[fl->sp];
 
-    // this is ugly but - find a better way maybe with fixed width
-    // maybe we have shared helper methods, but specific types of freelists use fixed width
-    for (uint8_t i = 0; i < fl->type_size; i++) {
-        fl->data[(id*fl->type_size)+i] = *(uint8_t*)(data+i);
-    }
+    // memcpy rather than a byte loop. the loop was a third of total runtime - a payload here is
+    // tens of bytes, and copying it one byte at a time is that many iterations of load, store,
+    // increment and compare where libc does a couple of vector moves. every caller hands us the
+    // address of a stack local, so the regions never overlap and memcpy's restrict holds
+    memcpy(fl->data + id*fl->type_size, data, fl->type_size);
 
     return id;
 }
