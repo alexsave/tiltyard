@@ -11,6 +11,8 @@
 #include "strategy/tier02_snipers.h"
 #include "strategy/tier03_slicers.h"
 #include "strategy/tier04_suits.h"
+#include "strategy/tier05_degens.h"
+#include "strategy/tier09_oracles.h"
 
 // just add more as you wish :)
 #define IMPLS \
@@ -19,7 +21,9 @@
     X(t1) \
     X(t2) \
     X(t3) \
-    X(t4)
+    X(t4) \
+    X(t5) \
+    X(t9)
 
 // THIS WHOLE THING needs to be passed around
 

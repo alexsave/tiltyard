@@ -15,6 +15,11 @@
 // every behavioural knob lives in T2Params so a sweep harness can vary it without
 // touching this file. ALL DEFAULTS ARE /* UNCALIBRATED */ PLACEHOLDERS.
 
+// why we are getting out, which decides whether we are willing to cross fair value to do it
+#define T2_FLAT_NONE 0
+#define T2_FLAT_EDGE 1  // hit the position cap: still price-disciplined
+#define T2_FLAT_TIME 2  // hit the time stop: out at any price
+
 // where fair value comes from. the doc calls this fair_value_source
 typedef enum {
     T2_FV_MICROPRICE,  // size-weighted touch. leans toward the thinner side
@@ -65,6 +70,19 @@ typedef struct T2Params {
     // which removes the arresting force that pulls price back toward fair value
     u64 max_hold_ns;
 
+    // once a flatten starts it runs to FLAT and nothing else trades until it is done, then
+    // nothing trades at all for this long.
+    //
+    // both halves are load-bearing, and the run that taught us cost 1.3 billion shares in
+    // eight seconds. the flatten used to fire per-wake off "am i over the threshold right
+    // now", which meant one shot took inventory from the cap back under it, the edge test
+    // saw a clean book on the very next wake and re-entered, and the position was back at
+    // the cap. exit crossing up to the ask, re-entry crossing down to the bid, spread paid
+    // twice a round trip, at wake speed. the latch makes an exit a decision about the whole
+    // position rather than about one shot, and the cooldown stops the signal that put us
+    // there from firing again the instant we are out of it
+    u64 reentry_cooldown_ns;
+
     // no book, no signal, nothing to do - come back later
     u64 idle_wake_ns;
     u64 retry_wake_ns;
@@ -93,6 +111,16 @@ typedef struct T2 {
 
     // when we last went from flat to holding something, for the time stop
     u64 position_since_ns;
+
+    // the flatten latch. 0 = trading normally. set when we decide to get out, and it stays
+    // set until inventory is actually 0 - so the exit cannot be interrupted and handed back
+    // to the entry signal half way through. we keep WHY, because it decides the price
+    // discipline: T2_FLAT_EDGE came from the position cap and still refuses to sell below
+    // fair value, T2_FLAT_TIME came from the time stop and takes whatever the touch is
+    u8 flattening;
+
+    // no new shots until this. set when a flatten completes
+    u64 cooldown_until_ns;
     u8 pending_buy;
     u32 shot_id;
 

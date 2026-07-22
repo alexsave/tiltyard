@@ -59,6 +59,9 @@ static T2Params t2_defaults() {
     p.flatten_threshold           = 800;    /* UNCALIBRATED */
     p.flatten_urgency_ticks       = 1;      /* UNCALIBRATED */
     p.max_hold_ns                 = 30 * MIN_TO_NS; /* UNCALIBRATED */
+    // long enough that a re-entry is a new decision about a new book, not the tail of the
+    // exit we just finished
+    p.reentry_cooldown_ns         = 30 * S_TO_NS;   /* UNCALIBRATED */
 
     p.idle_wake_ns                = 1 * S_TO_NS;   /* UNCALIBRATED */
     p.retry_wake_ns               = 1 * MIN_TO_NS; /* UNCALIBRATED */
@@ -86,6 +89,8 @@ T2* t2_init() {
 
     t2->pending = 0;
     t2->position_since_ns = 0;
+    t2->flattening = T2_FLAT_NONE;
+    t2->cooldown_until_ns = 0;
     t2->pending_buy = 0;
     t2->shot_id = MAX_U32;
     t2->inventory = 0;
@@ -159,6 +164,15 @@ static u8 t2_settle(T2* t2, Context* ctx) {
                 t2->position_since_ns = ctx->real_time_ns;
             else if (t2->inventory == 0)
                 t2->position_since_ns = 0;
+
+            // flat at last: release the latch and stand down for the cooldown. this is the
+            // ONLY place the latch clears - reaching flat is the whole exit condition, and
+            // clearing it anywhere earlier is what let a half-finished exit turn back into
+            // an entry
+            if (t2->inventory == 0 && t2->flattening != T2_FLAT_NONE) {
+                t2->flattening = T2_FLAT_NONE;
+                t2->cooldown_until_ns = ctx->real_time_ns + t2->p.reentry_cooldown_ns;
+            }
         }
 
         t2->pending = 0;
@@ -343,10 +357,25 @@ static u8 t2_find_flatten(T2* t2, Context* ctx, T2Book* b, u32 fv, T2Shot* shot)
     u8 timed_out = t2->inventory != 0 && t2->position_since_ns != 0 &&
                    (ctx->real_time_ns - t2->position_since_ns) >= t2->p.max_hold_ns;
 
-    if ((t2->inventory >= (i64)t2->p.flatten_threshold || (timed_out && t2->inventory > 0))
-        && b->have_bid) {
+    // arm the latch. from here every wake works the position down to zero and the edge test
+    // does not get a look in - see t2_on_snapshot. the time stop can upgrade a latch that
+    // is already armed, because a cap-flatten that fair value has frozen in place is
+    // exactly the position the time stop exists to release
+    if (timed_out)
+        t2->flattening = T2_FLAT_TIME;
+    else if (t2->flattening == T2_FLAT_NONE &&
+             (t2->inventory >= (i64)t2->p.flatten_threshold ||
+              t2->inventory <= -(i64)t2->p.flatten_threshold))
+        t2->flattening = T2_FLAT_EDGE;
+
+    if (t2->flattening == T2_FLAT_NONE)
+        return 0;
+
+    u8 at_any_price = t2->flattening == T2_FLAT_TIME;
+
+    if (t2->inventory > 0 && b->have_bid) {
         // long: sell into the bid, but only at or above what we think it is worth
-        if (!timed_out && 2u * (u32)b->best_bid < fv)
+        if (!at_any_price && 2u * (u32)b->best_bid < fv)
             return 0;
 
         shot->buy = 0;
@@ -358,10 +387,9 @@ static u8 t2_find_flatten(T2* t2, Context* ctx, T2Book* b, u32 fv, T2Shot* shot)
         return 1;
     }
 
-    if ((t2->inventory <= -(i64)t2->p.flatten_threshold || (timed_out && t2->inventory < 0))
-        && b->have_ask) {
+    if (t2->inventory < 0 && b->have_ask) {
         // short: buy it back, but only at or below fair value
-        if (!timed_out && 2u * (u32)b->best_ask > fv)
+        if (!at_any_price && 2u * (u32)b->best_ask > fv)
             return 0;
 
         shot->buy = 1;
@@ -437,11 +465,21 @@ u8 t2_on_snapshot(T2* t2, Context* ctx) {
 
     u32 fv = t2_fair_value_half_ticks(t2, ctx, &book);
 
+    // getting out comes FIRST and, while the latch is armed, comes exclusively. the edge
+    // test is what put us at the cap, so letting it run during an exit means fighting our
+    // own flatten: out at the ask, straight back in at the bid, spread paid both ways
     T2Shot shot;
-    if (t2_find_edge(t2, &book, fv, &shot))
+    if (t2_find_flatten(t2, ctx, &book, fv, &shot))
         return t2_send_shot(t2, ctx, out, &shot);
 
-    if (t2_find_flatten(t2, ctx, &book, fv, &shot))
+    if (t2->flattening != T2_FLAT_NONE)
+        return t2_sleep(ctx, t2->p.retry_wake_ns);
+
+    // just finished an exit. whatever the book is showing, it is the book we just crossed
+    if (ctx->real_time_ns < t2->cooldown_until_ns)
+        return t2_sleep(ctx, t2->cooldown_until_ns - ctx->real_time_ns);
+
+    if (t2_find_edge(t2, &book, fv, &shot))
         return t2_send_shot(t2, ctx, out, &shot);
 
     return t2_sleep(ctx, t2->p.idle_wake_ns);
