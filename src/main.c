@@ -49,7 +49,7 @@ int main(int argc, char* argv[]){
     client_allocations[tm->t4_index] = 60;
     // t5 degens: ~450k active US day traders; doc says 100s-1000s in sim. momentum retail -
     // the crash amplifier, and the protective-sell-stop population that fuels the cascade
-    client_allocations[tm->t5_index] = 0;
+    client_allocations[tm->t5_index] = 200;
     // t9 oracles: true value pickers are professionally rare, doc says 10s-100s. deep
     // contrarian capital anchored to fundamental - THE arresting loop, the crash floor
     client_allocations[tm->t9_index] = 30;
