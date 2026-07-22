@@ -42,8 +42,21 @@ BS* bs_init(uint16_t metadata_capacity) {
 // size is actually an upper bound
 uint32_t bs_reserve(BS* bs, uint32_t size, uint32_t refs, void ** address_holder){
     if (bs->md_start == bs->md_end) {
-        printf("md start is looped back to md end, double the capacity %u \n", bs->md_start);
-        printf("last size is %u\n", bs->metadata[(bs->md_end-1+bs->md_capacity)%bs->md_capacity].size);
+        // this is a *slot* exhaustion, never a byte one - the store doubles itself below. the
+        // usual cause is a blob whose refs never fell to zero: reclaim only walks forward from
+        // the head, so a single leaked ref pins md_start and the ring fills behind it. live
+        // bytes far under store_capacity is the tell that a ref leak, not depth, filled it
+        u32 live_bytes = 0;
+        for (u32 i = bs->md_start; ; i = (i + 1) % bs->md_capacity) {
+            live_bytes += bs->metadata[i].size;
+            if ((i + 1) % bs->md_capacity == bs->md_end)
+                break;
+        }
+        printf("bs metadata ring full: %u of %u slots live, head at %u with %u refs\n",
+               bs->md_capacity, bs->md_capacity, bs->md_start, bs->metadata[bs->md_start].refs);
+        printf("  live bytes %u of store capacity %u, requested %u, last size %u\n",
+               live_bytes, bs->store_capacity, size,
+               bs->metadata[(bs->md_end - 1 + bs->md_capacity) % bs->md_capacity].size);
         exit(1);
         // there is no clean way to double the metadata capactiy
         // if we just ignore the current values of md_start and md_end, we lose good tracking on the store

@@ -1044,6 +1044,11 @@ void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing
     sc->last_mbo = next_mbo;
     bs_resize(mbo_bs, new_size);
 
+    // squash the post-cross book into the price tiers before any response below pins one, same
+    // ordering the continuous path uses - otherwise an mbp subscriber is handed its fill next to
+    // a touch that still shows the depth the cross just consumed
+    mbp_derive(sc);
+
     // each maker settles at the clearing price (not its resting price), gives its reserve back,
     // and gets a fill notification just like a continuous maker would
     while (!cb_is_empty(fills)) {
@@ -1069,6 +1074,12 @@ void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing
         u32 fstatus = (1 << FILL_BIT) | (1 << AUCTION_BIT) | (partial ? (1 << PARTIAL_FILL_BIT) : 0);
         schedule_response(sc, maker_client, fstatus, q, fill->order_id, clearing, REASON_NONE);
     }
+
+    // hand back the construction ref the superseded book was reserved with, exactly as the
+    // continuous and prune paths do. without this the predecessor never reaches zero refs, and
+    // since the metadata ring can only reclaim from its head, one leaked slot parks md_start
+    // forever - the ring then fills to md_capacity and the next reserve is fatal
+    bs_get(mbo_bs, prev_mbo);
 
     fl_release(orders, taker_id);
 }
@@ -1254,14 +1265,20 @@ void server_auction(ServerContext* sc) {
     // order re-prices to the clearing price - a working price, so it rests as bounded interest
     // instead of eating the book at any price. filled and cancelled orders (quantity 0) fall out
     u8 queued = 0; // did we actually add residual? convert_holder may already hold a fired stop
+    // auction-only interest either crosses here or dies here, so this drain is the only place
+    // that sees both outcomes - counted so a cross reports whether the moc path engaged at all
+    u32 only_crossed = 0, only_cancelled = 0;
     while (!cb_is_empty(sc->auction_arrivals)) {
         u32 id = *(u32*)cb_deque(sc->auction_arrivals);
         Order* o = (Order*)fl_get(sc->orders, id);
-        if (o->quantity == 0)
+        if (o->quantity == 0) {
+            only_crossed += (o->status >> AUCTION_ONLY_BIT) & 1;
             continue;
+        }
 
         // auction-only: cross or cancel, no continuous life to fall back to
         if ((o->status >> AUCTION_ONLY_BIT) & 1) {
+            only_cancelled++;
             o->status |= (1 << REJECT_BIT);
             o->quantity = 0;
             schedule_response(sc, o->client_id, (1 << REJECT_BIT), 0, id, 0, CXL_IOC_UNFILLED);
@@ -1276,6 +1293,10 @@ void server_auction(ServerContext* sc) {
         cb_queue(sc->convert_holder, &id);
         queued = 1;
     }
+
+    if (only_crossed || only_cancelled)
+        // "residual" covers both the untouched and the partially crossed - either way the rest dies
+        printf("AUCTION only-orders: %u fully crossed, %u cancelled with residual\n", only_crossed, only_cancelled);
 
     // cap our residual batch with a sentinel and schedule the drain, same as the continuous path.
     // only if we actually queued - convert_holder can already hold an unrelated fired-stop batch
