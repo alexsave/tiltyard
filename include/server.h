@@ -135,6 +135,12 @@ typedef struct ServerContext {
     // add-on subscribers. append-only like the candles, so it reads back as a flat array
     CB* imbalances;
 
+    // scratch: the client_ids that had will_notify set this cycle, so the reset at the end of
+    // server_stream touches only them. clearing the flag used to mean walking every client on
+    // every book change, which profiled at a fifth of total runtime for a handful of real
+    // flags. queued once per schedule_response, drained and cleared once per stream
+    CB* notified;
+
     // stream roster: client_ids grouped by sub_tier, built once and never mutated (ws
     // connect/disconnect is read live at send time). tier_offset is CSR - tier t owns
     // stream_roster[tier_offset[t] .. tier_offset[t+1]).

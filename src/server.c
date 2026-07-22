@@ -83,6 +83,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->candles_hr = cb_init(sizeof(Candle));
     sc->candles_day = cb_init(sizeof(Candle));
     sc->imbalances = cb_init(sizeof(Imbalance));
+    sc->notified = cb_init(sizeof(u32));
 
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
     sc->fills = cb_init(sizeof(Fill));
@@ -168,8 +169,12 @@ void schedule_response(ServerContext* sc, u32 client_id, u32 status, u32 quantit
     u32 response_id = fl_insert(sc->responses, &r);
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
-    // so don't blast over websocket
-    sc->client_settings[client_id].will_notify = 1;
+    // so don't blast over websocket. the flag doubles as the dedup guard for the scratch
+    // buffer - already set means already queued, so an id lands in there at most once
+    if (!sc->client_settings[client_id].will_notify) {
+        sc->client_settings[client_id].will_notify = 1;
+        cb_queue(sc->notified, &client_id);
+    }
 }
 
 // same as schedule_response, but carries both legs of an atomic pair in one delivery
@@ -181,7 +186,10 @@ void schedule_pair_response(ServerContext* sc, u32 client_id, u32 status, u32 or
     u32 response_id = fl_insert(sc->responses, &r);
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
-    sc->client_settings[client_id].will_notify = 1;
+    if (!sc->client_settings[client_id].will_notify) {
+        sc->client_settings[client_id].will_notify = 1;
+        cb_queue(sc->notified, &client_id);
+    }
 }
 
 // broadcast one tier's latest data to one client. index is a blob id (blob tiers) or a buffer
@@ -219,8 +227,12 @@ void server_stream(ServerContext* sc) {
         }
     }
 
-    for (u32 ci = 0; ci < sc->ho->num_clients; ci++)
-        cs[ci].will_notify = 0;
+    // only the clients that were actually flagged, not every client in the sim. deduped on the
+    // way in, so this is at most one pass over the handful that got a direct response
+    u32 flagged = cb_count(sc->notified);
+    for (u32 i = 0; i < flagged; i++)
+        cs[*(u32*)cb_at(sc->notified, i)].will_notify = 0;
+    cb_clear(sc->notified);
 }
 
 // checks the cancel order id valididtiy, 0 if it's good to cancel
@@ -2408,6 +2420,7 @@ void server_free(ServerContext* sc) {
     cb_free(sc->candles_hr);
     cb_free(sc->candles_day);
     cb_free(sc->imbalances);
+    cb_free(sc->notified);
     free(sc->stream_roster);
     free(sc->tier_offset);
     free(sc->tier_source);
