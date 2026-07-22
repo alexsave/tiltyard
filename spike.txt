@@ -1,0 +1,30 @@
+TYD — "The Tiltyard Spike"
+Jan 8, 1970 · 15:30:17 UTC · duration: 8 seconds
+
+┌─────────────────────────────────┬─────────────────────┐
+│                                 │                     │
+├─────────────────────────────────┼─────────────────────┤
+│ Open (pre-spike)                │ $1.17               │
+├─────────────────────────────────┼─────────────────────┤
+│ Session high                    │ $3.25               │
+├─────────────────────────────────┼─────────────────────┤
+│ Session low                     │ $1.10               │
+├─────────────────────────────────┼─────────────────────┤
+│ Peak print rate                 │ 925,889 trades/sec  │
+├─────────────────────────────────┼─────────────────────┤
+│ Peak tape                       │ 176M shares/sec     │
+├─────────────────────────────────┼─────────────────────┤
+│ Total volume, 8 sec             │ 1.33 billion shares │
+├─────────────────────────────────┼─────────────────────┤
+│ Share of the entire 15-day tape │ 65%                 │
+└─────────────────────────────────┴─────────────────────┘
+
+The whole float turned over several times before anyone's wake timer fired twice. Twelve prop shops (clients #8–19) held the tape hostage for eight seconds; eight market makers (#0–7) requoted against every single print. The other 100 participants — the funds, the execution desks, the value guys — sent 103 messages combined and mostly slept through it.
+
+The kicker: client #8's cash went from $221,966 to $992,987,600 and back to negative $16,470. A billion dollars round-tripped in 13 seconds. Nobody ended the day with a position.
+
+Meanwhile, thirty Oracles sat on bids at $0.89–0.94 they'd placed on day zero and never flinched. The all-time low of the entire run is $0.89 — their exact band. They bought the panic, held for eight days, and distributed at $1.13.
+
+The floor held. The ceiling was the problem — nobody was short $TYD at $3.25 except twelve firms who then immediately weren't.
+
+$TYD: it's not a stock, it's a hot potato with a ticker.
