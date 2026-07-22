@@ -90,6 +90,11 @@ typedef struct T4Params {
     u64 processing_time;
     u64 net_latency;
     u64 initial_wake;
+    // spread the boot phase across the tier. a whole-hour initial_wake shared by every
+    // instance starts the entire population on one tick, and no amount of per-agent period
+    // skew can pull them apart afterwards - they just march in step at slightly different
+    // rates. this is the master phase reference and it has to be per-agent
+    u64 initial_wake_spread_ns;
 } T4Params;
 
 typedef struct T4 {
@@ -117,6 +122,7 @@ typedef struct T4 {
     i64 inventory;
     i64 cash_guess;
 
+    u64 first_wake_ns;     // this agent's own boot phase, drawn once
     u32 name_idx;
     u32 rng;
 } T4;

@@ -97,6 +97,7 @@ static T3Params t3_defaults() {
     p.net_latency            = 3 * (S_TO_NS / 1000);  /* UNCALIBRATED */ // 3ms
 
     p.initial_wake           = 13 * H_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 30 * MIN_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
@@ -160,6 +161,10 @@ T3* t3_init() {
     t3->name_idx = t3_next_name % T3_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t3->rng = 0xc2b2ae35u * (t3_next_name + 1);
+
+    // its own boot phase, so the tier does not start life as one agent
+    t3->first_wake_ns = t3->p.initial_wake
+                      + (u64)(t3_rand(t3) % 1000) * (t3->p.initial_wake_spread_ns / 1000);
 
     // no two of them run on the same clock
     t3->p.child_interval_ns = t3_skew(t3, t3->p.child_interval_ns);
@@ -585,7 +590,7 @@ u8 t3_on_snapshot(T3* t3, Context* ctx) {
 }
 
 void t3_get_settings(T3* t3, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t3->p.initial_wake;
+    client_settings->initial_wake    = t3->first_wake_ns;
     client_settings->processing_time = t3->p.processing_time;
     client_settings->net_latency     = t3->p.net_latency;
 

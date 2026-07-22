@@ -39,6 +39,7 @@ static T5Params t5_defaults() {
     p.ema_alpha_pct          = 20;    /* UNCALIBRATED */ // ~ last few prints dominate
     p.up_threshold_bp        = 300;   /* UNCALIBRATED */ // 3% above trend
     p.stop_loss_pct          = 6;     /* UNCALIBRATED */
+    p.stop_loss_spread_pct   = 3;     /* UNCALIBRATED */
 
     // concentrated: a quarter of the account into one name, which is retail-plausible and
     // still leaves room to be wrong three times
@@ -118,6 +119,16 @@ T5* t5_init() {
     t5->name_idx = t5_next_name % T5_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t5->rng = 0x1b56c4e9u * (t5_next_name + 1);
+
+    // and its own stop distance, so the field is smeared rather than stacked
+    {
+        u16 sp = t5->p.stop_loss_spread_pct;
+        if (sp) {
+            i32 off = (i32)(t5_rand(t5) % (2u * sp + 1u)) - (i32)sp;
+            i32 v = (i32)t5->p.stop_loss_pct + off;
+            t5->p.stop_loss_pct = (u16)(v < 1 ? 1 : v);
+        }
+    }
 
     // and its own arrival time. spreading the first wake is what breaks the population out
     // of lockstep at the start; the scatter above is what keeps it out

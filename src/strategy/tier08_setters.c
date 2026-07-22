@@ -39,6 +39,7 @@ static T8Params t8_defaults() {
 
     p.entry_offset_bp       = 200;   /* UNCALIBRATED */ // 2% below, "at support"
     p.stop_loss_pct         = 8;     /* UNCALIBRATED */
+    p.stop_loss_spread_pct   = 4;     /* UNCALIBRATED */
 
     p.hold_horizon_ns       = 10 * DAY_TO_NS; /* UNCALIBRATED */
     p.order_ttl_ns          = 5 * DAY_TO_NS;  /* UNCALIBRATED */
@@ -59,6 +60,7 @@ static T8Params t8_defaults() {
     p.processing_time       = 2 * S_TO_NS;   /* UNCALIBRATED */
     p.net_latency           = 150 * (S_TO_NS / 1000); /* UNCALIBRATED */ // 150ms
     p.initial_wake          = 15 * H_TO_NS;  /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 2 * H_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
@@ -98,6 +100,20 @@ T8* t8_init() {
     t8->name_idx = t8_next_name % T8_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t8->rng = 0x7feb352du * (t8_next_name + 1);
+
+    // and its own stop distance, so the field is smeared rather than stacked
+    {
+        u16 sp = t8->p.stop_loss_spread_pct;
+        if (sp) {
+            i32 off = (i32)(t8_rand(t8) % (2u * sp + 1u)) - (i32)sp;
+            i32 v = (i32)t8->p.stop_loss_pct + off;
+            t8->p.stop_loss_pct = (u16)(v < 1 ? 1 : v);
+        }
+    }
+
+    // its own boot phase, so the tier does not start life as one agent
+    t8->first_wake_ns = t8->p.initial_wake
+                      + (u64)(t8_rand(t8) % 1000) * (t8->p.initial_wake_spread_ns / 1000);
 
     i64 span = t8->p.capital_max - t8->p.capital_min;
     t8->capital = t8->p.capital_min + (i64)(t8_rand(t8) % (u32)(span + 1));
@@ -357,7 +373,7 @@ u8 t8_on_snapshot(T8* t8, Context* ctx) {
 }
 
 void t8_get_settings(T8* t8, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t8->p.initial_wake;
+    client_settings->initial_wake    = t8->first_wake_ns;
     client_settings->processing_time = t8->p.processing_time;
     client_settings->net_latency     = t8->p.net_latency;
 

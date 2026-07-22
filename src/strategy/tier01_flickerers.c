@@ -80,6 +80,29 @@ static T1Params t1_defaults() {
 }
 
 
+// xorshift, per agent. determinism is a hard rule: same seed in, same sequence out
+static u32 t1_rand(T1* t1) {
+    u32 x = t1->rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    t1->rng = x;
+    return x;
+}
+
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// this tier genuinely has a cadence - the fix is not to remove the clock but to stop every
+// agent sharing one. N instances holding an identical timer all fire on the same tick,
+// which makes them one agent N times larger rather than N agents. 12 snipers on an
+// identical 30-minute max_hold put ~59,000 orders into a single minute of the hour
+static u64 t1_skew(T1* t1, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t1_rand(t1) % 1001) * (base / 2000);
+}
+
 T1* t1_init() {
     T1* t1 = malloc(sizeof(T1));
 
@@ -103,6 +126,11 @@ T1* t1_init() {
     t1->name_idx = t1_next_name % T1_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t1->rng = 0x9e3779b9u * (t1_next_name + 1);
+
+    // no two of them run on the same clock
+    t1->p.min_requote_interval_ns = t1_skew(t1, t1->p.min_requote_interval_ns);
+    t1->p.idle_wake_ns = t1_skew(t1, t1->p.idle_wake_ns);
+    t1->p.sweep_cooldown_ns = t1_skew(t1, t1->p.sweep_cooldown_ns);
     t1_next_name++;
 
     return t1;

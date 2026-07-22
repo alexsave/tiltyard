@@ -77,7 +77,14 @@ typedef struct T5Params {
     // the protective sell-stop, a percent below the entry. scales with price (a fixed tick
     // stop is trivial at $100 and enormous at $10). this IS the sell-weakness exit, and the
     // cascade fuel: a degen buys strength, parks this, and rides until it is stopped out
+    // the protective stop distance, and a per-agent SPREAD around it. one shared constant
+    // puts every agent's stop on the same handful of trigger prices - a real cascade had
+    // 336 stops at $266 alone out of 1,378 - because they all enter near each other and
+    // all subtract the same percentage. real stop fields are smeared out, because real
+    // people do not all pick the same distance, and a smeared field cascades differently:
+    // it bleeds rather than detonating one price level at a time
     u16 stop_loss_pct;
+    u16 stop_loss_spread_pct;
 
     // herd shaping. a participation gate so a trigger fires a CLUSTER, not one identical
     // block; a per-agent threshold jitter so they do not all cross at the exact same tick

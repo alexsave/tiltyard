@@ -69,6 +69,7 @@ static T12Params t12_defaults() {
     p.processing_time           = 1 * S_TO_NS; /* UNCALIBRATED */
     p.net_latency               = 5 * (S_TO_NS / 1000); /* UNCALIBRATED */ // 5ms
     p.initial_wake              = 14 * H_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 1 * H_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
@@ -126,6 +127,10 @@ T12* t12_init() {
     t12->name_idx = t12_next_name % T12_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t12->rng = 0x45d9f3b3u * (t12_next_name + 1);
+
+    // its own boot phase, so the tier does not start life as one agent
+    t12->first_wake_ns = t12->p.initial_wake
+                      + (u64)(t12_rand(t12) % 1000) * (t12->p.initial_wake_spread_ns / 1000);
 
     // no two of them run on the same clock
     t12->p.slice_interval_ns = t12_skew(t12, t12->p.slice_interval_ns);
@@ -407,7 +412,7 @@ u8 t12_on_snapshot(T12* t12, Context* ctx) {
 }
 
 void t12_get_settings(T12* t12, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t12->p.initial_wake;
+    client_settings->initial_wake    = t12->first_wake_ns;
     client_settings->processing_time = t12->p.processing_time;
     client_settings->net_latency     = t12->p.net_latency;
 

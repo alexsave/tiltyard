@@ -59,6 +59,11 @@ typedef struct T10Params {
     u64 processing_time;   // batched through a fund administrator overnight. irrelevant
     u64 net_latency;
     u64 initial_wake;
+    // spread the boot phase across the tier. a whole-hour initial_wake shared by every
+    // instance starts the entire population on one tick, and no amount of per-agent period
+    // skew can pull them apart afterwards - they just march in step at slightly different
+    // rates. this is the master phase reference and it has to be per-agent
+    u64 initial_wake_spread_ns;
 } T10Params;
 
 typedef struct T10 {
@@ -73,6 +78,7 @@ typedef struct T10 {
     u8  pending;
     u32 pending_id;
 
+    u64 first_wake_ns;     // this agent's own boot phase, drawn once
     u32 name_idx;
     u32 rng;
 } T10;

@@ -48,7 +48,14 @@ typedef struct T8Params {
     u16 entry_offset_bp;
 
     // the protective stop, below the entry. same cascade-fuel role as T5's
+    // the protective stop distance, and a per-agent SPREAD around it. one shared constant
+    // puts every agent's stop on the same handful of trigger prices - a real cascade had
+    // 336 stops at $266 alone out of 1,378 - because they all enter near each other and
+    // all subtract the same percentage. real stop fields are smeared out, because real
+    // people do not all pick the same distance, and a smeared field cascades differently:
+    // it bleeds rather than detonating one price level at a time
     u16 stop_loss_pct;
+    u16 stop_loss_spread_pct;
 
     // HOLD_HORIZON. days to weeks, then out regardless - a swing trade that has not worked
     // is closed and the capital redeployed
@@ -76,6 +83,11 @@ typedef struct T8Params {
     u64 processing_time;
     u64 net_latency;
     u64 initial_wake;
+    // spread the boot phase across the tier. a whole-hour initial_wake shared by every
+    // instance starts the entire population on one tick, and no amount of per-agent period
+    // skew can pull them apart afterwards - they just march in step at slightly different
+    // rates. this is the master phase reference and it has to be per-agent
+    u64 initial_wake_spread_ns;
 } T8Params;
 
 typedef struct T8 {
@@ -107,6 +119,7 @@ typedef struct T8 {
 
     u32 check_offset_s;   // this person's own after-work hour, drawn once
 
+    u64 first_wake_ns;     // this agent's own boot phase, drawn once
     u32 name_idx;
     u32 rng;
 } T8;

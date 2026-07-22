@@ -78,10 +78,34 @@ static T2Params t2_defaults() {
     p.net_latency                 = 200;    /* UNCALIBRATED */
 
     p.initial_wake                = 13 * H_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 30 * MIN_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
 
+
+// xorshift, per agent. determinism is a hard rule: same seed in, same sequence out
+static u32 t2_rand(T2* t2) {
+    u32 x = t2->rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    t2->rng = x;
+    return x;
+}
+
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// this tier genuinely has a cadence - the fix is not to remove the clock but to stop every
+// agent sharing one. N instances holding an identical timer all fire on the same tick,
+// which makes them one agent N times larger rather than N agents. 12 snipers on an
+// identical 30-minute max_hold put ~59,000 orders into a single minute of the hour
+static u64 t2_skew(T2* t2, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t2_rand(t2) % 1001) * (base / 2000);
+}
 
 T2* t2_init() {
     T2* t2 = malloc(sizeof(T2));
@@ -106,6 +130,15 @@ T2* t2_init() {
     t2->name_idx = t2_next_name % T2_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t2->rng = 0x85ebca6bu * (t2_next_name + 1);
+
+    // its own boot phase, so the tier does not start life as one agent
+    t2->first_wake_ns = t2->p.initial_wake
+                      + (u64)(t2_rand(t2) % 1000) * (t2->p.initial_wake_spread_ns / 1000);
+
+    // no two of them run on the same clock
+    t2->p.max_hold_ns = t2_skew(t2, t2->p.max_hold_ns);
+    t2->p.reentry_cooldown_ns = t2_skew(t2, t2->p.reentry_cooldown_ns);
+    t2->p.idle_wake_ns = t2_skew(t2, t2->p.idle_wake_ns);
     t2_next_name++;
 
     return t2;
@@ -487,7 +520,7 @@ u8 t2_on_snapshot(T2* t2, Context* ctx) {
 }
 
 void t2_get_settings(T2* t2, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t2->p.initial_wake;
+    client_settings->initial_wake    = t2->first_wake_ns;
     client_settings->processing_time = t2->p.processing_time;
     client_settings->net_latency     = t2->p.net_latency;
 

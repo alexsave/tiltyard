@@ -51,6 +51,7 @@ static T10Params t10_defaults() {
     p.processing_time        = 1 * H_TO_NS;  /* UNCALIBRATED */
     p.net_latency            = 1 * S_TO_NS;  /* UNCALIBRATED */
     p.initial_wake           = 15 * H_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 5 * DAY_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
@@ -79,6 +80,10 @@ T10* t10_init() {
     t10->name_idx = t10_next_name % T10_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t10->rng = 0x9e3779b9u * (t10_next_name + 1);
+
+    // its own boot phase, so the tier does not start life as one agent
+    t10->first_wake_ns = t10->p.initial_wake
+                      + (u64)(t10_rand(t10) % 1000) * (t10->p.initial_wake_spread_ns / 1000);
 
     i64 span = t10->p.contribution_max - t10->p.contribution_min;
     t10->contribution = t10->p.contribution_min + (i64)(t10_rand(t10) % (u32)(span + 1));
@@ -176,7 +181,7 @@ u8 t10_on_snapshot(T10* t10, Context* ctx) {
 }
 
 void t10_get_settings(T10* t10, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t10->p.initial_wake;
+    client_settings->initial_wake    = t10->first_wake_ns;
     client_settings->processing_time = t10->p.processing_time;
     client_settings->net_latency     = t10->p.net_latency;
 

@@ -84,6 +84,7 @@ static T4Params t4_defaults() {
     p.net_latency               = 1 * S_TO_NS; /* UNCALIBRATED */
 
     p.initial_wake              = 13 * H_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 1 * H_TO_NS; /* UNCALIBRATED */
 
     return p;
 }
@@ -137,6 +138,10 @@ T4* t4_init() {
     t4->name_idx = t4_next_name % T4_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t4->rng = 0x27d4eb2fu * (t4_next_name + 1);
+
+    // its own boot phase, so the tier does not start life as one agent
+    t4->first_wake_ns = t4->p.initial_wake
+                      + (u64)(t4_rand(t4) % 1000) * (t4->p.initial_wake_spread_ns / 1000);
 
     // no two of them run on the same clock
     t4->p.rebalance_interval_ns = t4_skew(t4, t4->p.rebalance_interval_ns);
@@ -372,7 +377,7 @@ u8 t4_on_snapshot(T4* t4, Context* ctx) {
 }
 
 void t4_get_settings(T4* t4, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t4->p.initial_wake;
+    client_settings->initial_wake    = t4->first_wake_ns;
     client_settings->processing_time = t4->p.processing_time;
     client_settings->net_latency     = t4->p.net_latency;
 
