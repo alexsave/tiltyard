@@ -10,6 +10,7 @@
 #include "strategy/tier01_flickerers.h"
 #include "strategy/tier02_snipers.h"
 #include "strategy/tier03_slicers.h"
+#include "strategy/tier04_suits.h"
 
 // just add more as you wish :)
 #define IMPLS \
@@ -17,7 +18,8 @@
     X(co) \
     X(t1) \
     X(t2) \
-    X(t3)
+    X(t3) \
+    X(t4)
 
 // THIS WHOLE THING needs to be passed around
 

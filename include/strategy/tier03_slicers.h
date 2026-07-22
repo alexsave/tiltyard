@@ -143,6 +143,9 @@ typedef struct T3 {
     // t3_get_settings - so the only book it ever sees rides along on the responses to its
     // own orders. that is plenty at this cadence, and it has to be remembered between them
     u8  have_book;
+    u8  booted;         // have we EVER seen a book. the probe is a one-time bootstrap: once
+                        // we have, an empty book means wait, not spam fresh resting probes -
+                        // re-probing on every empty-book tick leaks a resting order each time
     u8  book_have_bid;
     u8  book_have_ask;
     u16 last_bid;

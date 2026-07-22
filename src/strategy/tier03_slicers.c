@@ -125,6 +125,7 @@ T3* t3_init() {
     t3->inventory = 0;
 
     t3->have_book = 0;
+    t3->booted = 0;
     t3->book_have_bid = 0;
     t3->book_have_ask = 0;
     t3->last_bid = 0;
@@ -317,6 +318,8 @@ static void t3_read_book(T3* t3, Context* ctx, T3Book* b) {
         t3->book_have_bid = hb;
         t3->book_have_ask = ha;
         t3->have_book = hb || ha;
+        if (t3->have_book)
+            t3->booted = 1;
     }
 
     b->have_bid = t3->book_have_bid;
@@ -496,9 +499,16 @@ u8 t3_on_snapshot(T3* t3, Context* ctx) {
     T3Book book;
     t3_read_book(t3, ctx, &book);
 
-    // nothing seen yet: one probe child gets us a book to work against
-    if (!t3->have_book)
+    // no book right now. probe ONLY to bootstrap the very first one - a single resting
+    // feeler to get an mbo back. once we have ever seen a book, an empty book (makers all
+    // pulled in a crash) means WAIT for liquidity to return, not fire another resting probe:
+    // re-probing on every empty tick leaks a resting order and its share reserve each time,
+    // which is the runaway that pinned a slicer at tens of millions of reserved shares
+    if (!t3->have_book) {
+        if (t3->booted)
+            return t3_sleep(ctx, t3->p.retry_wake_ns);
         return t3_send_probe(t3, ctx, out);
+    }
 
     if (t3->p.slice_disabled) {
         u8 can_cross = t3->parent_buy ? book.have_ask : book.have_bid;

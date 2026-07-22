@@ -29,9 +29,16 @@ typedef struct T1Params {
 
     // inventory skew: shift BOTH quotes by (inventory / skew_unit) * skew_coeff ticks,
     // away from the position. long -> both lower, inviting sells
-    i32 inventory_limit;          // +/- cap. at the cap that side stops quoting
+    i32 inventory_limit;          // +/- cap. at the cap the capped side goes defensively wide
     u16 skew_coeff;               // ticks of shift per skew_unit of inventory
     u16 skew_unit;                // shares per unit of skew
+
+    // at the cap, how far from the reference to push the CAPPED side. a maker never goes
+    // dark - it keeps a two-sided market but widens the side it can't grow. going fully dark
+    // is what freezes the whole market: if every maker caps the same way at once (all long,
+    // or all short, after a shock) and they all pull, the book empties and never refills.
+    // a wide quote still there also lets informed flow lift it and walk price back to value
+    u16 cap_defensive_ticks;
 
     // requote triggers
     u32 requote_queue_slip_threshold; // shares ahead of us before we re-post for priority

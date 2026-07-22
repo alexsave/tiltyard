@@ -173,7 +173,15 @@ static u8 t2_settle(T2* t2, Context* ctx) {
         return 0;
     }
 
-    if (is_reject || is_ws || is_ping)
+    // clear pending only when NO shot is actually in flight. a self-wake ping or a
+    // broadcast can land while a shot is still outstanding (its order_id won't match, so
+    // the branch above didn't fire) - clearing pending there would let a second shot go
+    // out, and the first shot's fill then arrives with shot_id already moved on and gets
+    // dropped from the position. that undercount is exactly what lets inventory blow past
+    // max_position. so a stray wake never releases the guard; only the shot's own ack does.
+    // the one legitimate no-shot case is the ws-connect handshake, which sets pending with
+    // shot_id still MAX_U32
+    if ((is_reject || is_ws || is_ping) && t2->shot_id == MAX_U32)
         t2->pending = 0;
 
     return is_reject ? 1 : 0;

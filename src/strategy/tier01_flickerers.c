@@ -45,6 +45,9 @@ static T1Params t1_defaults() {
     p.inventory_limit              = 2000;  /* UNCALIBRATED */
     p.skew_coeff                   = 1;     /* UNCALIBRATED */
     p.skew_unit                    = 400;   /* UNCALIBRATED */
+    // ~10x the base half-spread: wide enough to strongly discourage growing the capped
+    // side, near enough that informed flow will still lift it to move price
+    p.cap_defensive_ticks          = 20;    /* UNCALIBRATED */
 
     p.requote_queue_slip_threshold = 1000;  /* UNCALIBRATED */
     p.max_quote_age_ns             = S_TO_NS / 2000;  /* UNCALIBRATED */ // 500us
@@ -147,8 +150,6 @@ typedef struct T1Quote {
     u16 ask;
     u16 bid_qty;
     u16 ask_qty;
-    u8 want_bid_side;  // clear once inventory hits the long cap
-    u8 want_ask_side;  // clear once inventory hits the short cap
 } T1Quote;
 
 // fold this response into our own books. the engine tells us about fills and acks; the
@@ -320,6 +321,18 @@ static void t1_target_quote(T1* t1, Context* ctx, u32 ref, T1Quote* q) {
     i64 bid = (i64)ref - (i64)half + skew;
     i64 ask = (i64)ref + (i64)half + skew;
 
+    // inventory caps. rather than pull the whole quote and go dark - which empties the book
+    // and can freeze the entire market when every maker caps the same way at once - keep a
+    // two-sided market and push the CAPPED side to a defensive width. that side (mostly)
+    // stops growing, but a quote still shows there, and informed flow lifting that wide
+    // quote is the price discovery that walks the market back toward value after a shock
+    u8 want_bid = t1->inventory < (i64)t1->p.inventory_limit;
+    u8 want_ask = t1->inventory > -(i64)t1->p.inventory_limit;
+    if (!want_bid)
+        bid = (i64)ref - (i64)t1->p.cap_defensive_ticks; // long-capped: bid far below
+    if (!want_ask)
+        ask = (i64)ref + (i64)t1->p.cap_defensive_ticks; // short-capped: ask far above
+
     // the pair op demands bid strictly below ask, and price 0 is reserved. integer skew
     // can collapse or invert the quote, which is the locked-market landmine
     if (bid < 1)
@@ -339,11 +352,6 @@ static void t1_target_quote(T1* t1, Context* ctx, u32 ref, T1Quote* q) {
     // position is the classic bug - it shrinks exactly when we most need to sell
     q->bid_qty = t1->p.quote_size;
     q->ask_qty = t1->p.quote_size;
-
-    // at a cap we stop adding to the position but keep offering the other side, so we
-    // can work back toward flat
-    q->want_bid_side = t1->inventory < (i64)t1->p.inventory_limit;
-    q->want_ask_side = t1->inventory > -(i64)t1->p.inventory_limit;
 }
 
 // remember the message we just handed over, so its ack can be matched and read
@@ -352,14 +360,6 @@ static u8 t1_await(T1* t1, Context* ctx, u8 kind) {
     t1->pending_kind = kind;
     t1->pending_id = ctx->next_order_id;
     return 1;
-}
-
-// both quotes down in one atomic book pass - the pull a maker actually wants
-static u8 t1_send_pull(T1* t1, Context* ctx, Order* out) {
-    out->status = (1 << ASK_BID_PAIR_BIT) | (1 << BUY_DIRECTION_BIT) | (1 << CANCEL_BIT);
-    out->other_id = t1->bid_id;
-    out->second_id = t1->ask_id;
-    return t1_await(t1, ctx, T1_PEND_PULL);
 }
 
 // exactly one leg resting means an ack raced a fill. pull the survivor on its own, so we
@@ -473,10 +473,8 @@ u8 t1_on_snapshot(T1* t1, Context* ctx) {
 
     u8 resting = (t1->bid_id != MAX_U32) && (t1->ask_id != MAX_U32);
 
-    // at a cap on either side: take the whole quote down
-    if (!quote.want_bid_side || !quote.want_ask_side)
-        return resting ? t1_send_pull(t1, ctx, out) : t1_sleep(ctx, t1->p.idle_wake_ns);
-
+    // no cap branch that pulls: t1_target_quote already widened any capped side, so we
+    // always keep a two-sided market up and never withdraw liquidity entirely
     if (resting)
         return t1_maintain_quote(t1, ctx, &book, &quote, out);
 
