@@ -667,14 +667,24 @@ void stop_rest(ServerContext* sc, u32 order_id) {
 
 // keep the batch in convert_holder sorted by arrival: if the newcomer isn't the newest,
 // re-queue the current last entry to grow the ring (the first shift), slide the rest
-// right until the gap is where the newcomer belongs, and write it once. batches are one
-// trigger price's worth, so they're small - revisit if that stops being true
+// right until the gap is where the newcomer belongs, and write it once.
+//
+// batches are one trigger price's worth. that used to be assumed small; it is not - a
+// stop cascade puts every stop sharing a trigger into ONE batch, and a run with two
+// stop-armed retail populations produced 336 at a single price out of 1,378 in the wave.
+// the insertion sort is fine at that size (a few tens of thousands of shifts is nothing),
+// but the function should not be trusting its inputs to keep it in bounds
 void stop_batch_insert(ServerContext* sc, u32 batch_start, u32 order_id) {
     CB* ch = sc->convert_holder;
     Order* o = (Order*)fl_get(sc->orders, order_id);
     u64 ns = o->ns;
 
     u32 n = cb_count(ch);
+    // a batch_start past the end means the ring was drained under us. there is no batch to
+    // sort into, so treat it as a fresh one rather than walking backwards out of the buffer
+    if (batch_start > n)
+        batch_start = n;
+
     if (n > batch_start) {
         u32 last = *(u32*)cb_at(ch, n - 1);
         Order* last_o = (Order*)fl_get(sc->orders, last);

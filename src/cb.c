@@ -32,12 +32,21 @@ void cb_queue(CB* cb, void* value) {
             return;
         }
 
-        u8* doubled = malloc(2 * cb->capacity * cb->type_size);
+        // byte offsets, not entry offsets. buffer is a u8*, so buffer[i] is byte i - both
+        // memcpys used to index it as if it were an array of entries, which is only the
+        // same thing when type_size is 1. harmless on an append-only ring (start is always
+        // 0, so the wrong maths gives the right answer) and silent corruption on a
+        // dequeued one, whose start walks. u64 because capacity * type_size overflows u32
+        u64 esz  = cb->type_size;
+        u64 head = (u64)(cb->capacity - cb->start) * esz; // start..capacity
+        u64 tail = (u64)cb->end * esz;                    // 0..end
+
+        u8* doubled = malloc((u64)cb->capacity * 2 * esz);
 
         // copy start to capacity
-        memcpy(doubled, &(cb->buffer[cb->start]), (cb->capacity - cb->start) * cb->type_size);
+        memcpy(doubled, cb->buffer + (u64)cb->start * esz, head);
         // copy zero to end
-        memcpy(&(doubled[cb->capacity - cb->start]), cb->buffer, (cb->end) * cb->type_size);
+        memcpy(doubled + head, cb->buffer, tail);
 
         free(cb->buffer);
         cb->buffer = doubled;
