@@ -143,10 +143,28 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     return sc;
 }
 
+// which blob a client's subscription entitles it to, and the id to pin for the trip. the
+// tiers are all views of the same book - an mbo subscriber gets it order by order, an mbp1
+// subscriber just the touch - so a response carries whichever one the client pays for, the
+// same way a stream push does. anything outside the blob tiers (free, or a client that never
+// set one) pins the mbo: delivery drops it unread, but the ref accounting stays uniform
+static u8 client_blob_tier(ServerContext* sc, u32 client_id) {
+    u8 tier = sc->client_settings[client_id].sub_tier;
+    return tier <= TIER_MBP1 ? tier : TIER_MBO;
+}
+
+static u32 tier_blob_id(ServerContext* sc, u8 blob_tier) {
+    if (blob_tier == TIER_MBP)   return sc->last_mbp;
+    if (blob_tier == TIER_MBP10) return sc->last_mbp10;
+    if (blob_tier == TIER_MBP1)  return sc->last_mbp1;
+    return sc->last_mbo;
+}
+
 void schedule_response(ServerContext* sc, u32 client_id, u32 status, u32 quantity_filled, u32 order_id, u16 price, u8 rej_reason) {
-    // this assumes that all client are mbo subscribers
-    bs_bump_refs(sc->mbo_bs, sc->last_mbo);
-    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled, .price = price, .rej_reason = rej_reason};
+    u8 blob_tier = client_blob_tier(sc, client_id);
+    u32 blob_id = tier_blob_id(sc, blob_tier);
+    bs_bump_refs((BS*)sc->tier_source[blob_tier], blob_id);
+    Response r = {.tier = blob_tier, .snapshot_id = blob_id, .client_id = client_id, .status = status, .order_id = order_id, .quantity_filled = quantity_filled, .price = price, .rej_reason = rej_reason};
     u32 response_id = fl_insert(sc->responses, &r);
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
@@ -156,8 +174,10 @@ void schedule_response(ServerContext* sc, u32 client_id, u32 status, u32 quantit
 
 // same as schedule_response, but carries both legs of an atomic pair in one delivery
 void schedule_pair_response(ServerContext* sc, u32 client_id, u32 status, u32 order_id, u16 price, u32 quantity_filled, u32 second_order_id, u16 second_price, u32 second_quantity_filled, u8 rej_reason) {
-    bs_bump_refs(sc->mbo_bs, sc->last_mbo);
-    Response r = {.snapshot_id = sc->last_mbo, .client_id = client_id, .status = status, .order_id = order_id, .price = price, .quantity_filled = quantity_filled, .second_order_id = second_order_id, .second_price = second_price, .second_quantity_filled = second_quantity_filled, .rej_reason = rej_reason};
+    u8 blob_tier = client_blob_tier(sc, client_id);
+    u32 blob_id = tier_blob_id(sc, blob_tier);
+    bs_bump_refs((BS*)sc->tier_source[blob_tier], blob_id);
+    Response r = {.tier = blob_tier, .snapshot_id = blob_id, .client_id = client_id, .status = status, .order_id = order_id, .price = price, .quantity_filled = quantity_filled, .second_order_id = second_order_id, .second_price = second_price, .second_quantity_filled = second_quantity_filled, .rej_reason = rej_reason};
     u32 response_id = fl_insert(sc->responses, &r);
     u64 response_event = build_event(CLIENT_IN_TYPE, response_id);
     sch_schedule(sc->sch, response_event, calculate_jitter(sc->client_settings + (client_id), sc->rand));
@@ -1660,6 +1680,12 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     bs_resize(mbo_bs, new_size);
 
+    // squash the new book into its price-aggregated tiers here rather than at the end of the
+    // pass: every response scheduled below pins its own subscription's view of the book, and
+    // the maker fills come first. derived any later and a maker would be handed the previous
+    // touch alongside the fill that moved it. nothing between here and there touches the mbo
+    mbp_derive(sc);
+
     // ^ but this is just for our client of incoming order
     // we still need to go through and fill the orders we hit
     // just dont update the incoming order client after this "taker"
@@ -1885,9 +1911,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // this explicitly relies on the 2 client $10000000 1000sh initial setup
 
 
-    // might as well create a new MBP here. all we need is the new mbo
-
-    mbp_derive(sc);
+    // the mbp tiers were derived off this same book right after it was built, above
 
     bs_get(mbo_bs, prev_last_mbo);
     //mbo_dump(bs_get_no_ref(mbo_bs, sc->last_mbo));

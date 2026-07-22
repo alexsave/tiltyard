@@ -53,6 +53,10 @@ int main(int argc, char* argv[]){
     // t9 oracles: true value pickers are professionally rare, doc says 10s-100s. deep
     // contrarian capital anchored to fundamental - THE arresting loop, the crash floor
     client_allocations[tm->t9_index] = 30;
+    // t13 glaciers: US public pensions ~5000+, SWFs ~100, endowments in the hundreds; doc
+    // says 10s-100s. target-weight money, the largest pool in the sim - THE CEILING, since
+    // a mandate sells more the further price runs, and a floor only ever needs cash
+    client_allocations[tm->t13_index] = 20;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 
@@ -175,7 +179,7 @@ int main(int argc, char* argv[]){
                 // snapshot never reaches zero refs and the blob-store ring fills to its cap.
                 // a self-wake ping (snapshot_id == MAX_U32) never took a ref, so leave it alone
                 if (snapshot_id != MAX_U32)
-                    bs_get(mbo_bs, snapshot_id);
+                    bs_get((BS*)sc->tier_source[response.tier], snapshot_id);
                 // the wake we were holding has landed, so clear before the handler runs and it can
                 // arm the next one. a re-arm leaves the one it beat still in the scheduler, and that
                 // stale ping lands later with nothing pending - the compare keeps it from clearing
@@ -193,13 +197,16 @@ int main(int argc, char* argv[]){
                 context->order_id = response.order_id;
             } else if (client_settings[client_id].sub_tier == TIER_FREE) {
                 // free tier gets no book, just the last trade price already on the context -
-                // but still release the mbo ref schedule_response took, same as every other path
-                bs_get(mbo_bs, snapshot_id);
+                // but still release the ref schedule_response took, same as every other path
+                bs_get((BS*)sc->tier_source[response.tier], snapshot_id);
                 context->data_snapshot = 0;
                 context->order_id = response.order_id;
             } else {
-                // for some clients, they need to get the MBP. But that's later
-                context->data_snapshot = bs_get(mbo_bs, snapshot_id);
+                // the ack carries whichever tier this client subscribes to, resolved the same
+                // way a stream push is: schedule_response pinned that tier's blob, so an mbo
+                // subscriber gets the raw book here and an mbp1 subscriber gets the touch.
+                // handing everyone the mbo would be giving away depth nobody paid for
+                context->data_snapshot = bs_get((BS*)sc->tier_source[response.tier], snapshot_id);
                 context->order_id = response.order_id;
                 // they cant use it anyways
                 //if (response.order_id != MAX_U32)
