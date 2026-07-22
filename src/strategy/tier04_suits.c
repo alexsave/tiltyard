@@ -8,6 +8,7 @@
 #include "constants.h"
 #include "order.h"
 #include "ob.h"
+#include "mbp.h"
 #include "server.h"
 #include "response.h"
 
@@ -162,26 +163,28 @@ static u32 t4_fair_value_half_ticks(T4* t4, Context* ctx) {
     return (u32)fv;
 }
 
-// maintain the local replica of the touch off this response. no live stream at this
-// cadence, so the book only ever arrives on the ack to one of our own orders
+// maintain the local replica of the touch off this response. the snapshot carries whatever
+// this client's sub_tier subscribes to, on an order ack the same as on a broadcast, so at
+// TIER_MBP1 it is the BBO - the touch and its sizes, which is the whole data budget of this
+// tier. we never set WS_BIT, so it only ever arrives on the ack to one of our own orders
 static void t4_read_book(T4* t4, Context* ctx) {
-    MBO* mbo = (MBO*)ctx->data_snapshot;
-    if (!mbo)
+    MBP1* bbo = (MBP1*)ctx->data_snapshot;
+    if (!bbo)
         return;
 
-    u8 hb = mbo->hi_bid_index != MAX_U16 && mbo->hi_bid_index < mbo->level_count;
-    u8 ha = hb && (u32)mbo->hi_bid_index + 1 < mbo->level_count;
+    // price 0 is the engine's "no such level" - price 0 is reserved, so it is unambiguous
+    u8 hb = bbo->hi_bid.price != 0;
+    u8 ha = bbo->lo_ask.price != 0;
 
     if (hb) {
-        MBOIndex* bid = mbo->levels + mbo->hi_bid_index;
-        t4->last_bid = bid->price;
-        t4->last_bid_depth = bid->quantity;
+        t4->last_bid = bbo->hi_bid.price;
+        t4->last_bid_depth = bbo->hi_bid.quantity;
     }
     if (ha) {
-        MBOIndex* ask = mbo->levels + mbo->hi_bid_index + 1;
-        t4->last_ask = ask->price;
-        t4->last_ask_depth = ask->quantity;
+        t4->last_ask = bbo->lo_ask.price;
+        t4->last_ask_depth = bbo->lo_ask.quantity;
     }
+
     t4->book_have_bid = hb;
     t4->book_have_ask = ha;
     t4->have_book = hb || ha;

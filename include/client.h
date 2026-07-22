@@ -13,6 +13,12 @@
 #include "strategy/tier04_suits.h"
 #include "strategy/tier05_degens.h"
 #include "strategy/tier09_oracles.h"
+#include "strategy/tier07_tappers.h"
+#include "strategy/tier08_setters.h"
+#include "strategy/tier10_metronomes.h"
+#include "strategy/tier12_tides.h"
+#include "strategy/tier13_glaciers.h"
+#include "strategy/tier14_dmms.h"
 
 // just add more as you wish :)
 #define IMPLS \
@@ -23,7 +29,13 @@
     X(t3) \
     X(t4) \
     X(t5) \
-    X(t9)
+    X(t7) \
+    X(t8) \
+    X(t9) \
+    X(t10) \
+    X(t12) \
+    X(t13) \
+    X(t14)
 
 // THIS WHOLE THING needs to be passed around
 

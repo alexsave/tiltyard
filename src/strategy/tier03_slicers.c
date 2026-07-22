@@ -294,25 +294,24 @@ static u8 t3_await(T3* t3, Context* ctx, u8 kind, u16 qty) {
 //
 // with no live stream the only book we ever see is the one riding on the response to one
 // of our own orders - and a self-wake is a bare ping carrying nothing. so this caches what
-// it last saw. note the snapshot on an order response is always the MBO, whatever a client
-// is subscribed to; the sub_tier only picks the format of a *broadcast*, which we do not
-// take. reading it as anything else is reading the wrong struct
+// it last saw. the snapshot carries whatever this client's sub_tier subscribes to, on an
+// order ack the same as on a broadcast, so at TIER_MBP1 it is the BBO - the two prices and
+// their sizes, nothing behind them. reading it as anything else is reading the wrong struct
 static void t3_read_book(T3* t3, Context* ctx, T3Book* b) {
-    MBO* mbo = (MBO*)ctx->data_snapshot;
+    MBP1* bbo = (MBP1*)ctx->data_snapshot;
 
-    if (mbo) {
-        u8 hb = mbo->hi_bid_index != MAX_U16 && mbo->hi_bid_index < mbo->level_count;
-        u8 ha = hb && (u32)mbo->hi_bid_index + 1 < mbo->level_count;
+    if (bbo) {
+        // price 0 is the engine's "no such level" - price 0 is reserved, so it is unambiguous
+        u8 hb = bbo->hi_bid.price != 0;
+        u8 ha = bbo->lo_ask.price != 0;
 
         if (hb) {
-            MBOIndex* bid = mbo->levels + mbo->hi_bid_index;
-            t3->last_bid = bid->price;
-            t3->last_bid_depth = bid->quantity;
+            t3->last_bid = bbo->hi_bid.price;
+            t3->last_bid_depth = bbo->hi_bid.quantity;
         }
         if (ha) {
-            MBOIndex* ask = mbo->levels + mbo->hi_bid_index + 1;
-            t3->last_ask = ask->price;
-            t3->last_ask_depth = ask->quantity;
+            t3->last_ask = bbo->lo_ask.price;
+            t3->last_ask_depth = bbo->lo_ask.quantity;
         }
 
         t3->book_have_bid = hb;

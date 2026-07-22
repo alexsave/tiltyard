@@ -57,6 +57,22 @@ int main(int argc, char* argv[]){
     // says 10s-100s. target-weight money, the largest pool in the sim - THE CEILING, since
     // a mandate sells more the further price runs, and a floor only ever needs cash
     client_allocations[tm->t13_index] = 20;
+    // everything below is written but not yet switched on - counts come up one at a time
+    // t7 tappers: tens of millions of accounts (robinhood alone ~25M funded). uninformed
+    // near-pure-taker flow, the background informed flow is informed against
+    client_allocations[tm->t7_index] = 0;
+    // t8 setters: low-to-mid millions, a behavioural slice not a registry count. the only
+    // retail tier that RESTS - patient limits at support, and a second stop field under it
+    client_allocations[tm->t8_index] = 100;
+    // t10 metronomes: 100M+ individuals, the largest tier by headcount and the smallest by
+    // flow each. price-insensitive payroll buying - a permanent structural bid
+    client_allocations[tm->t10_index] = 0;
+    // t12 tides: dozens of managers, hundreds-to-1000s of funds; doc says 5-50. the MOC
+    // flow that makes the closing auction the biggest liquidity event of the day
+    client_allocations[tm->t12_index] = 0;
+    // t14 dmms: ~3-5 firms, ONE assigned per nyse name, so 1 is the correct count here.
+    // the imbalance sink that pairs against t12 - only meaningful once tides are running
+    client_allocations[tm->t14_index] = 0;
 
     ServerContext* sc = server_init(tm, client_allocations, 603);
 

@@ -116,8 +116,22 @@ char* t9_get_name(T9* t9) {
 // "wake me in n ns" - action bit 2. an Oracle mostly sleeps; the standing limit orders are
 // the real triggers. the engine keeps only the earliest wake in flight
 static u8 t9_sleep(Context* ctx, u64 delay) {
-    if (ctx->real_time_ns + delay >= ctx->next_wake_ns)
-        return 0;
+    // clamp inside a pending wake rather than deferring to it - see tier13_glaciers.c for
+    // the failure this avoids: a wake delivered a hair before its own fire_at leaves
+    // next_wake_ns advertising one that has already been spent, and every later re-arm is
+    // then dropped against that stale value.
+    //
+    // ONLY the feed-less calendar tiers do this, and the distinction is load-bearing. a
+    // tier on a live stream is woken by the tape whatever happens, so deferring costs it
+    // nothing - and clamping would defeat the wake dedup that stops a client arming a wake
+    // per event. applying this to the makers reintroduced exactly that storm and crashed
+    // the sim inside one second. this tier has no feed, so a lost wake is the end of it,
+    // and its cadence is minutes-to-days so a clamp cannot spin
+    if (ctx->real_time_ns + delay >= ctx->next_wake_ns) {
+        if (ctx->next_wake_ns <= ctx->real_time_ns + 1)
+            return 0;
+        delay = ctx->next_wake_ns - ctx->real_time_ns - 1;
+    }
     ctx->wake_delay_ns = delay;
     return 2;
 }
@@ -237,22 +251,38 @@ u8 t9_on_snapshot(T9* t9, Context* ctx) {
     if (sell_level > MAX_U16)
         sell_level = MAX_U16;
 
-    // decide the single side we want standing right now:
-    //  - price cheap (at/below the buy band) and room to accumulate -> a bid floor at buy_level
-    //  - price dear (at/above the sell band) and we hold something   -> an ask ceiling at sell_level
-    //  - otherwise -> nothing; pull any resting order and sleep
+    // decide the single side we want standing right now.
+    //
+    // THE BID IS UNCONDITIONAL ON WHERE PRICE IS NOW, and that is the whole point. it used
+    // to be posted only once ref had already fallen to buy_level, and pulled the moment it
+    // hadn't - which inverts the mechanism completely. a floor that appears in response to
+    // a price is not a floor, it is a late reaction: on day 8 the session opened and ran
+    // 90 -> 34 in under five seconds while every Oracle sat with reserved_cash = 0 and
+    // nothing in the book, then woke half an hour later and posted into the wreckage.
+    //
+    // a real value investor's bid is a STANDING bid, parked below the market for as long
+    // as it takes, precisely so that it is already there when something falls into it.
+    // resting it costs nothing but reserved cash, and this tier has more of that than any
+    // other. if price is already BELOW buy_level the same order is marketable and buys
+    // aggressively - which is not a bug, it is the arrest: everything under the band is a
+    // bargain by this tier's own reckoning, and position_limit is what bounds it.
+    //
+    // the ask still needs a real reason, because it needs INVENTORY - it can only ever
+    // sell what it actually holds, so it takes priority over the bid when both apply
     u8  want_active = 0, want_buy = 0;
     u16 want_price = 0;
-    if (ref <= buy_level && t9->inventory < (i64)t9->p.position_limit) {
-        want_active = 1; want_buy = 1; want_price = (u16)buy_level;
-    } else if (ref >= sell_level && t9->inventory > 0) {
+    if (ref >= sell_level && t9->inventory > 0) {
         want_active = 1; want_buy = 0; want_price = (u16)sell_level;
+    } else if (t9->inventory < (i64)t9->p.position_limit) {
+        want_active = 1; want_buy = 1; want_price = (u16)buy_level;
     }
 
     // reconcile the one resting order toward what we want. one action per wake; the pending
     // guard keeps a single message in flight
     if (!want_active) {
-        // inside the value band: do nothing. pull a resting order if we still have one
+        // the only way to want nothing now: full at position_limit with price not yet dear
+        // enough to distribute into. that is the one case where there is genuinely no order
+        // to rest - we are out of capacity to buy and have no reason to sell
         if (t9->order_id != MAX_U32)
             return t9_send_cancel(t9, ctx, out);
         return t9_sleep(ctx, t9->p.refresh_ns);
