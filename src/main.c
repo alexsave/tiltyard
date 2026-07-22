@@ -219,7 +219,9 @@ int main(int argc, char* argv[]){
             // materialized as its own order and, being a cancel too, also rests nothing - it
             // rode back under second_order_id. (a resting quote carries no cancel bit, so its
             // legs are left in place to be freed when they are each later cancelled.)
-            if (rested_nothing_cancel && ((status >> ASK_BID_PAIR_BIT) & 1))
+            // exception: a REJECTED pair already released its ask leg server-side (server.c:1464)
+            // and reports second_order_id as MAX_U32, so only reap it when the pair was accepted.
+            if (rested_nothing_cancel && ((status >> ASK_BID_PAIR_BIT) & 1) && !((status >> REJECT_BIT) & 1))
                 fl_release(orders, response.second_order_id);
 
             if (action & 1){
