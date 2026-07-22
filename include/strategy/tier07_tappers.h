@@ -61,6 +61,9 @@ typedef struct T7Params {
     u64 retry_wake_ns;
     u64 reject_backoff_ns;
 
+    // how far apart the tier's agents first show up - see T5, same reasoning
+    u64 initial_wake_spread_ns;
+
     // capital. median account is low thousands
     i64 capital_min;
     i64 capital_max;
@@ -83,6 +86,8 @@ typedef struct T7 {
     u16 last_ask;
     u8  have_bid;
     u8  have_ask;
+
+    u64 first_wake_ns;     // this agent's own arrival, drawn once
 
     u8  pending;
     u32 pending_id;

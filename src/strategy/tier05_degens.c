@@ -61,6 +61,7 @@ static T5Params t5_defaults() {
     // human seconds-to-minutes reacting to a move: look every few minutes, bursty
     p.burst_wake_ns          = 3 * MIN_TO_NS; /* UNCALIBRATED */
     p.burst_jitter_ns        = 2 * MIN_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns = 6 * H_TO_NS;   /* UNCALIBRATED */
 
     p.seed_price             = 100;   /* UNCALIBRATED */
 
@@ -118,6 +119,11 @@ T5* t5_init() {
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t5->rng = 0x1b56c4e9u * (t5_next_name + 1);
 
+    // and its own arrival time. spreading the first wake is what breaks the population out
+    // of lockstep at the start; the scatter above is what keeps it out
+    t5->first_wake_ns = t5->p.initial_wake
+                      + (u64)(t5_rand(t5) % 1000) * (t5->p.initial_wake_spread_ns / 1000);
+
     // this agent's account, drawn once. every degen brings a different amount of money to
     // the same idea - which is most of what turns one signal into a spread of order sizes
     i64 span = t5->p.capital_max - t5->p.capital_min;
@@ -137,10 +143,26 @@ char* t5_get_name(T5* t5) {
 
 // bursty self-wake - action bit 2. WAKE_SIGNAL modelled as "look every so often, act only
 // when the tape is moving". the engine keeps only the earliest wake in flight
+// NOTHING THIS TIER DOES RUNS ON A CLOCK. a day trader has no cadence - they look when
+// they look. so every delay the tier asks for gets stretched by a random factor rather
+// than used as given: the burst cadence, the overnight wait, the backoff after a reject,
+// all of it.
+//
+// exact constants are the trap, and they are easy to miss because each one looks harmless
+// on its own. 10 minutes, 30 seconds, 3 minutes - every one a divisor of an hour, sitting
+// on top of an initial_wake that was 13:00:00.000000000 on the dot for all 200 agents. a
+// fixed period can never drift off the boundary it started on, so the tier stays welded to
+// the top of the hour for the whole run. the tape showed it plainly: 13,479 trades in
+// minute :00 against a ~1,900 baseline, and a spike on the chart every 30 minutes
+static u64 t5_scatter(T5* t5, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [50%, 150%] of what was asked for
+    return base / 2 + (u64)(t5_rand(t5) % 1001) * (base / 1000);
+}
+
 static u8 t5_sleep(T5* t5, Context* ctx, u64 base) {
-    // jitter so 200 degens do not all wake on the exact same tick - a herd clusters, it
-    // does not march in lockstep
-    u64 delay = base + (t5_rand(t5) % (t5->p.burst_jitter_ns + 1));
+    u64 delay = t5_scatter(t5, base);
     if (ctx->real_time_ns + delay >= ctx->next_wake_ns)
         return 0;
     ctx->wake_delay_ns = delay;
@@ -468,7 +490,7 @@ u8 t5_on_snapshot(T5* t5, Context* ctx) {
 }
 
 void t5_get_settings(T5* t5, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t5->p.initial_wake;
+    client_settings->initial_wake    = t5->first_wake_ns;
     client_settings->processing_time = t5->p.processing_time;
     client_settings->net_latency     = t5->p.net_latency;
 

@@ -55,6 +55,21 @@ typedef struct T12Params {
     // worked through the continuous session. index funds are NAV-matched, so this is high
     u16 moc_fraction_pct;
 
+    // DAILY CREATION/REDEMPTION - the baseline, and the half of this tier that actually
+    // shows up every day. it is NOT a drift correction and must not be gated on one: money
+    // arrives at the fund and the fund buys, money leaves and the fund sells, whether or
+    // not the weight has moved a basis point. a cap-weighted holding barely drifts at all
+    // when price is behaving, so a tier built only on tracking error is a tier that does
+    // nothing on a normal day - which is exactly backwards, because THIS is the flow that
+    // makes the closing auction the largest liquidity event of the session.
+    //
+    // it is also where Metronome money is supposed to arrive: payroll buys index funds,
+    // the fund buys the stock. we cannot route T10 into here, so the inflow bias stands in
+    // for it - and index funds have run persistent net inflows for decades, so a bias
+    // rather than a fair coin is the honest default
+    u16 daily_flow_bp;      // net creation/redemption per day, in bp of the held position
+    u8  inflow_bias_pct;    // chance a given day is a creation rather than a redemption
+
     // REBALANCE_CALENDAR. daily creation/redemption is small and constant; the quarterly
     // reconstitution is the big one. modelled as a routine cadence plus a periodic large
     // event, which is what the calendar actually looks like from the book's side

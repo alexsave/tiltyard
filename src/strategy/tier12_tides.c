@@ -43,6 +43,11 @@ static T12Params t12_defaults() {
     // NAV is struck at the closing price, so most of it has to print in the cross
     p.moc_fraction_pct          = 80;  /* UNCALIBRATED */
 
+    // the daily baseline. small against the position, but it happens EVERY session, which
+    // is what a closing auction is mostly made of
+    p.daily_flow_bp             = 150;  /* UNCALIBRATED */ // 1.5% of the position per day
+    p.inflow_bias_pct           = 55;   /* UNCALIBRATED */ // mild net creation, per decades of it
+
     p.rebalance_period_ns       = 1 * DAY_TO_NS;  /* UNCALIBRATED */ // creation/redemption
     p.reconstitution_period_ns  = 90 * DAY_TO_NS; /* UNCALIBRATED */ // quarterly
     p.reconstitution_multiple   = 20;  /* UNCALIBRATED */
@@ -78,6 +83,20 @@ static u32 t12_rand(T12* t12) {
     return x;
 }
 
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// unlike the casual tiers, this one genuinely does have a cadence - the fix is not to
+// remove the clock, it is to stop every agent sharing the same one. N instances holding an
+// identical timer all fire on the same tick, which makes them one agent N times larger
+// rather than N agents. that is what put a 7x spike in minute :00 and a bar on the chart
+// every 30 minutes: not real market structure, just arithmetic on identical constants
+static u64 t12_skew(T12* t12, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t12_rand(t12) % 1001) * (base / 2000);
+}
+
 static i64 t12_target_shares(T12* t12, u16 price) {
     if (price == 0)
         return 0;
@@ -107,6 +126,9 @@ T12* t12_init() {
     t12->name_idx = t12_next_name % T12_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t12->rng = 0x45d9f3b3u * (t12_next_name + 1);
+
+    // no two of them run on the same clock
+    t12->p.slice_interval_ns = t12_skew(t12, t12->p.slice_interval_ns);
 
     i64 span = t12->p.aum_max - t12->p.aum_min;
     t12->aum = t12->p.aum_min + (i64)(t12_rand(t12) % (u32)(span / 1000 + 1)) * 1000;
@@ -240,6 +262,19 @@ static void t12_check_calendar(T12* t12, Context* ctx) {
     if (drift >= (i64)t12->p.tracking_error_bp)
         delta = t12_target_shares(t12, ctx->mark) - t12->inventory;
 
+    // DAILY CREATION/REDEMPTION, on top of and independent of any drift correction. this
+    // is the flow that happens every single session - the fund taking money in or paying
+    // it out - and gating it on tracking error was the bug: with price sitting quietly at
+    // fundamental a cap-weighted holding never drifts, so the tier sent 15 MOCs in 40 days
+    // and the closing auction had essentially nothing to cross
+    if (routine && t12->inventory > 0) {
+        i64 flow = t12->inventory * (i64)t12->p.daily_flow_bp / 10000;
+        if (flow > 0) {
+            u8 creation = (t12_rand(t12) % 100) < t12->p.inflow_bias_pct;
+            delta += creation ? flow : -flow;
+        }
+    }
+
     if (reconstitution) {
         // the quarterly event: the index itself changed, so this is a real position change
         // rather than a drift correction, and it is much larger
@@ -277,11 +312,21 @@ static u8 t12_send_moc(T12* t12, Context* ctx, Order* out) {
     if (want > MAX_U16)
         want = MAX_U16;
 
-    out->status = (1 << AUCTION_ONLY_BIT) |
+    // MARKET-on-close, and the "market" half is not decoration - it is the difference
+    // between crossing and never crossing. auction_walk sorts parked limits into the price
+    // heaps and lets them cross only if the clearing price comes out on the right side of
+    // them, but market orders "have no price, so they ride under the whole curve as base
+    // demand/supply" - they take whatever the cross prints.
+    //
+    // this used to be a limit at ctx->mark, which is a contradiction of the comment that
+    // was sitting right here: an index fund's NAV is struck AT the closing price, so any
+    // price it names is a price it might miss the close over, and missing the close is the
+    // one outcome its mandate cannot tolerate. over 40 days it sent 15 of these and crossed
+    // exactly zero - they were parked, evaluated against a clearing price that never came
+    // back in their favour, and cancelled at the bell every single session
+    out->status = (1 << AUCTION_ONLY_BIT) | (1 << IS_MARKET_BIT) |
                   (t12->moc_is_buy ? (1 << BUY_DIRECTION_BIT) : 0);
-    // priced at the mark: an index fund wants the closing price itself, whatever it is,
-    // so it is not trying to set a limit - it is trying not to miss the cross
-    out->price = ctx->mark;
+    out->price = 0;
     out->quantity = (u16)want;
 
     t12->moc_sent_today = 1;

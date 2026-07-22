@@ -89,6 +89,11 @@ typedef struct T5Params {
     u64 burst_wake_ns;
     u64 burst_jitter_ns;
 
+    // how far apart the tier's agents first show up. a whole-hour initial_wake identical
+    // across every instance boots the entire population on the same tick, and fixed
+    // periods then keep it there forever
+    u64 initial_wake_spread_ns;
+
     // nothing has printed yet - momentum needs a reference to start from
     u16 seed_price;
 
@@ -151,6 +156,7 @@ typedef struct T5 {
     i64 cash_guess;
 
     // 200 agents against a much shorter handle list, so the slot number goes in the name
+    u64 first_wake_ns;         // this agent's own arrival, drawn once
     char name[40];
     u32 name_idx;
     u32 rng;

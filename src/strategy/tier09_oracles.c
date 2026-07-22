@@ -80,6 +80,20 @@ static u32 t9_rand(T9* t9) {
     return x;
 }
 
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// unlike the casual tiers, this one genuinely does have a cadence - the fix is not to
+// remove the clock, it is to stop every agent sharing the same one. N instances holding an
+// identical timer all fire on the same tick, which makes them one agent N times larger
+// rather than N agents. that is what put a 7x spike in minute :00 and a bar on the chart
+// every 30 minutes: not real market structure, just arithmetic on identical constants
+static u64 t9_skew(T9* t9, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t9_rand(t9) % 1001) * (base / 2000);
+}
+
 T9* t9_init() {
     T9* t9 = malloc(sizeof(T9));
 
@@ -99,6 +113,9 @@ T9* t9_init() {
     t9->name_idx = t9_next_name % T9_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t9->rng = 0x6c62272eu * (t9_next_name + 1);
+
+    // no two of them run on the same clock
+    t9->p.refresh_ns = t9_skew(t9, t9->p.refresh_ns);
 
     // this Oracle's fixed disagreement with the true fundamental, drawn once: a symmetric
     // offset in [-bias, +bias], mean-zero across the population so there is no baked-in drift

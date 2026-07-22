@@ -52,6 +52,7 @@ static T7Params t7_defaults() {
 
     p.retry_wake_ns         = 2 * H_TO_NS;  /* UNCALIBRATED */
     p.reject_backoff_ns     = 30 * MIN_TO_NS; /* UNCALIBRATED */
+    p.initial_wake_spread_ns= 8 * H_TO_NS;    /* UNCALIBRATED */
 
     p.capital_min           = 500;   /* UNCALIBRATED */
     p.capital_max           = 40000; /* UNCALIBRATED */
@@ -92,6 +93,9 @@ T7* t7_init() {
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t7->rng = 0xc2b2ae35u * (t7_next_name + 1);
 
+    t7->first_wake_ns = t7->p.initial_wake
+                      + (u64)(t7_rand(t7) % 1000) * (t7->p.initial_wake_spread_ns / 1000);
+
     i64 span = t7->p.capital_max - t7->p.capital_min;
     t7->capital = t7->p.capital_min + (i64)(t7_rand(t7) % (u32)(span + 1));
     t7->cash_guess = t7->capital;
@@ -129,8 +133,20 @@ static u64 t7_next_gap(T7* t7, Context* ctx) {
     return (a + b) / 2 + base / 4;
 }
 
-static u8 t7_sleep(T7* t7, Context* ctx, u64 delay) {
-    (void)t7;
+// same rule as the Degens, and it matters more here: this tier is supposed to be a
+// memoryless arrival process, and a memoryless process with a fixed overnight step is not
+// memoryless. t7_next_gap already draws a random intraday gap, but retry_wake_ns (2h) and
+// reject_backoff_ns (30m) were exact - so every night the whole population stepped in
+// clean 2-hour multiples off a 14:00:00.000000000 boot and arrived at the open perfectly
+// in phase, having thrown away whatever scatter the previous session gave it
+static u64 t7_scatter(T7* t7, u64 base) {
+    if (base == 0)
+        return 0;
+    return base / 2 + (u64)(t7_rand(t7) % 1001) * (base / 1000);
+}
+
+static u8 t7_sleep(T7* t7, Context* ctx, u64 base) {
+    u64 delay = t7_scatter(t7, base);
     if (ctx->real_time_ns + delay >= ctx->next_wake_ns)
         return 0;
     ctx->wake_delay_ns = delay;
@@ -230,7 +246,7 @@ u8 t7_on_snapshot(T7* t7, Context* ctx) {
 }
 
 void t7_get_settings(T7* t7, ClientSettings* client_settings) {
-    client_settings->initial_wake    = t7->p.initial_wake;
+    client_settings->initial_wake    = t7->first_wake_ns;
     client_settings->processing_time = t7->p.processing_time;
     client_settings->net_latency     = t7->p.net_latency;
 

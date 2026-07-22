@@ -82,6 +82,7 @@ static T2Params t2_defaults() {
     return p;
 }
 
+
 T2* t2_init() {
     T2* t2 = malloc(sizeof(T2));
 

@@ -98,6 +98,20 @@ static u32 t4_rand(T4* t4) {
     return x;
 }
 
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// unlike the casual tiers, this one genuinely does have a cadence - the fix is not to
+// remove the clock, it is to stop every agent sharing the same one. N instances holding an
+// identical timer all fire on the same tick, which makes them one agent N times larger
+// rather than N agents. that is what put a 7x spike in minute :00 and a bar on the chart
+// every 30 minutes: not real market structure, just arithmetic on identical constants
+static u64 t4_skew(T4* t4, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t4_rand(t4) % 1001) * (base / 2000);
+}
+
 T4* t4_init() {
     T4* t4 = malloc(sizeof(T4));
 
@@ -123,6 +137,9 @@ T4* t4_init() {
     t4->name_idx = t4_next_name % T4_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t4->rng = 0x27d4eb2fu * (t4_next_name + 1);
+
+    // no two of them run on the same clock
+    t4->p.rebalance_interval_ns = t4_skew(t4, t4->p.rebalance_interval_ns);
 
     // this fund's persistent disagreement with the true fundamental, drawn once and fixed:
     // a symmetric offset in [-bias, +bias]. mean-zero across the population, so there is no

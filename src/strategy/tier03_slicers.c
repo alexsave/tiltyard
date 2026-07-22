@@ -101,6 +101,30 @@ static T3Params t3_defaults() {
     return p;
 }
 
+// xorshift, per agent. determinism is a hard rule: same seed in, same sequence out
+static u32 t3_rand(T3* t3) {
+    u32 x = t3->rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    t3->rng = x;
+    return x;
+}
+
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// unlike the casual tiers, this one genuinely does have a cadence - the fix is not to
+// remove the clock, it is to stop every agent sharing the same one. N instances holding an
+// identical timer all fire on the same tick, which makes them one agent N times larger
+// rather than N agents. that is what put a 7x spike in minute :00 and a bar on the chart
+// every 30 minutes: not real market structure, just arithmetic on identical constants
+static u64 t3_skew(T3* t3, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t3_rand(t3) % 1001) * (base / 2000);
+}
+
 T3* t3_init() {
     T3* t3 = malloc(sizeof(T3));
 
@@ -136,6 +160,10 @@ T3* t3_init() {
     t3->name_idx = t3_next_name % T3_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t3->rng = 0xc2b2ae35u * (t3_next_name + 1);
+
+    // no two of them run on the same clock
+    t3->p.child_interval_ns = t3_skew(t3, t3->p.child_interval_ns);
+    t3->p.idle_wake_ns = t3_skew(t3, t3->p.idle_wake_ns);
     t3_next_name++;
 
     return t3;
@@ -143,16 +171,6 @@ T3* t3_init() {
 
 char* t3_get_name(T3* t3) {
     return (char*)T3_NAMES[t3->name_idx];
-}
-
-// xorshift, per agent. determinism is a hard rule: same seed in, same sequence out
-static u32 t3_rand(T3* t3) {
-    u32 x = t3->rng;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    t3->rng = x;
-    return x;
 }
 
 // what we could read off the top of the book this wake

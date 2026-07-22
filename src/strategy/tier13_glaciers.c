@@ -100,6 +100,20 @@ static u32 t13_rand(T13* t13) {
     return x;
 }
 
+// PER-AGENT SKEW ON THE CADENCE PARAMS, drawn once at init and then fixed.
+//
+// unlike the casual tiers, this one genuinely does have a cadence - the fix is not to
+// remove the clock, it is to stop every agent sharing the same one. N instances holding an
+// identical timer all fire on the same tick, which makes them one agent N times larger
+// rather than N agents. that is what put a 7x spike in minute :00 and a bar on the chart
+// every 30 minutes: not real market structure, just arithmetic on identical constants
+static u64 t13_skew(T13* t13, u64 base) {
+    if (base == 0)
+        return 0;
+    // uniform on roughly [75%, 125%] of the tier value
+    return base * 3 / 4 + (u64)(t13_rand(t13) % 1001) * (base / 2000);
+}
+
 // the mandate in shares at a given price: what the fund is SUPPOSED to hold right now
 static i64 t13_target_shares(T13* t13, u16 price) {
     if (price == 0)
@@ -127,6 +141,11 @@ T13* t13_init() {
     t13->name_idx = t13_next_name % T13_NAME_COUNT;
     // each agent carries its own rng state, seeded off its slot. no shared global rng
     t13->rng = 0x27d4eb2fu * (t13_next_name + 1);
+
+    // no two of them run on the same clock
+    t13->p.slice_interval_ns = t13_skew(t13, t13->p.slice_interval_ns);
+    t13->p.slice_patience_ns = t13_skew(t13, t13->p.slice_patience_ns);
+    t13->p.rebalance_frequency_ns = t13_skew(t13, t13->p.rebalance_frequency_ns);
 
     i64 span = t13->p.aum_max - t13->p.aum_min;
     t13->aum = t13->p.aum_min + (i64)(t13_rand(t13) % (u32)(span / 1000 + 1)) * 1000;
