@@ -180,97 +180,58 @@ void mbo_to_index(MBORunner* run, u16 index) {
     run->level = ((void*)(run->data_start)) + run->metadata->byte_offset;
 }
 
-void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity, CB* fills, u32 cancel_id) {
-    // it warns we dont use price. shoudl we?
+// rebuild one price level after a marketable order ate into it. remaining_quantity is what the
+// taker still has to spend when it reaches this level; it fills the resting orders FIFO. up to two
+// order ids are cancels riding in the same book pass (the two legs of an atomic pair): a cancelled
+// order is being pulled, so it is never filled and never copied through - its size just comes off
+// the level. this is what stops one leg's marketable cross from filling, or leaving a ghost of, the
+// OTHER leg's cancel target when both land on the same shared level.
+void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_quantity, CB* fills, u32 cancel_id, u32 cancel_id2) {
     new->metadata->price = old->metadata->price;
-    new->metadata->quantity = old->metadata->quantity - remaining_quantity;
     new->metadata->byte_offset = ((void*)(new->level)) - new->data_start;
 
     MBOLevel* mod_level = old->level;
+    MBOLevel* out_level = new->level;
 
-    u32 remaining_orders_on_level = mod_level->order_count;
+    u32 level_quantity = old->metadata->quantity;
+    u16 out = 0;
 
-    u8 partial_fill = 0;
+    for (u16 i = 0; i < mod_level->order_count; i++) {
+        MBOEntry* e = mod_level->entries + i;
+        u32 oid = e->order_id;
+        u32 oq = e->quantity;
 
-    u16 i = 0;
-    // a spent taker takes nothing, so don't walk the level at all. the partial test inside is
-    // `order_quantity > remaining_quantity`, which any live order passes once remaining is 0
-    if (remaining_quantity > 0) {
-        for (; i < mod_level->order_count; i++) {
-
-            // that's what we USED to do. but really we just modify the order book here
-            // and somehow notify that THIS MUCH of THIS ORDER was filled, passing it up to serer.c to modify the order themselves
-            // which also solves the whole partial thing
-
-            MBOEntry * prev_order = mod_level->entries + i;
-            u32 prev_order_id = prev_order->order_id;
-
-            if (prev_order_id == cancel_id)
-                continue;
-
-            u32 order_quantity = prev_order->quantity;
-
-            if (order_quantity > remaining_quantity) {
-                //prev_order->quantity -= remaining_quantity;
-                Fill f = {
-                    .order_id = prev_order_id,
-                    .quantity_filled = remaining_quantity,
-                    .partial = 1};
-                cb_queue(fills, &f);
-                //printf("a filling %u\n", prev_order_id);
-                partial_fill = 1;
-                break;
-            } else {
-                // fill resting order entirely
-                remaining_orders_on_level--;
-                remaining_quantity -= order_quantity;
-                Fill f = {
-                    .order_id = prev_order_id,
-                    .quantity_filled = order_quantity};
-                cb_queue(fills, &f);
-                //printf("b filling %u\n", prev_order_id);
-
-                // spent exactly on this boundary - the only place remaining can reach 0, so it
-                // is the only place worth testing. stepping to the next order would report a
-                // zero-share fill against one we never touched. the i++ stands in for the one
-                // the loop step would have done, since the tail copy below reads i as the first
-                // entry that survives whole
-                if (remaining_quantity == 0) {
-                    i++;
-                    break;
-                }
-            }
-        }
-    }
-
-    MBOLevel * init = new->level;
-
-    u16 j = i;
-
-    if (partial_fill) {
-        // I feel like we were previously forgetting to write in the case of partial fill, not anymore
-        // first need to append that last one in, but NOT modify the one on server
-        MBOEntry * prev_order = mod_level->entries + i;
-        //printf("about to fill in data for partial fill %u", (prev_order->quantity - remaining_quantity));
-        init->entries[0].order_id = prev_order->order_id;
-        init->entries[0].quantity = prev_order->quantity - remaining_quantity;
-
-        j++;
-    }
-
-    init->order_count = remaining_orders_on_level;
-    for (; j < mod_level->order_count; j++){
-
-        MBOEntry * prev_order = mod_level->entries + j;
-        if (prev_order->order_id == cancel_id){
-            // skip it, but also increment i to make sure we write to the correct spot
-            i++;
+        // pulled by either leg: cancelled, so never fill and never copy - just drop its size
+        if (oid == cancel_id || oid == cancel_id2) {
+            level_quantity -= oq;
             continue;
         }
 
-        init->entries[j-i].order_id = prev_order->order_id;
-        init->entries[j-i].quantity = prev_order->quantity;
+        if (remaining_quantity == 0) {
+            // taker spent: this order survives whole
+            out_level->entries[out].order_id = oid;
+            out_level->entries[out].quantity = oq;
+            out++;
+        } else if (oq > remaining_quantity) {
+            // partial fill of this order - it stays with the remainder, taker is now spent
+            Fill f = { .order_id = oid, .quantity_filled = remaining_quantity, .partial = 1 };
+            cb_queue(fills, &f);
+            level_quantity -= remaining_quantity;
+            out_level->entries[out].order_id = oid;
+            out_level->entries[out].quantity = oq - remaining_quantity;
+            out++;
+            remaining_quantity = 0;
+        } else {
+            // full fill of this order - consumed, not copied
+            Fill f = { .order_id = oid, .quantity_filled = oq };
+            cb_queue(fills, &f);
+            level_quantity -= oq;
+            remaining_quantity -= oq;
+        }
     }
+
+    new->metadata->quantity = level_quantity;
+    out_level->order_count = out;
 }
 
 // used for cancellations
@@ -793,7 +754,7 @@ void ob_copy_range(MBORunner* old, MBORunner* new, u16 from, u16 to, OBSide** si
 
 // serialize one side's op into new_runner. old_runner must be sitting at s->lui.
 // returns the hi_bid_index this side implies for the new book.
-u16 ob_apply_op(OBSide* s, MBO* old_mbo, MBORunner* old_runner, MBORunner* new_runner, CB* fills) {
+u16 ob_apply_op(OBSide* s, MBO* old_mbo, MBORunner* old_runner, MBORunner* new_runner, CB* fills, u32 co_cancel_id) {
     u8 op_type = s->op_type;
     u8 direction = (s->rep->status >> BUY_DIRECTION_BIT) & 1;
     u16 price = s->rep->price;
@@ -844,8 +805,9 @@ u16 ob_apply_op(OBSide* s, MBO* old_mbo, MBORunner* old_runner, MBORunner* new_r
             hbi = new_runner->index;
 
         mbo_to_index(old_runner, s->modified_level);
-        // fill, but dont count the cancel_id
-        mbo_fill_remove(old_runner, new_runner, price, s->remaining, fills, is_can_rep ? cancel_id: MAX_U32);
+        // fill, but drop this op's own replaced order and the other leg's cancel target if
+        // either shares this crossed level (co_cancel_id is MAX_U32 when there is no other leg)
+        mbo_fill_remove(old_runner, new_runner, price, s->remaining, fills, is_can_rep ? cancel_id: MAX_U32, co_cancel_id);
     } else if (op_type == CAN_REP) {
         // we can assume is_can_rep
         hbi = old_mbo->hi_bid_index;
@@ -941,10 +903,16 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
     // either cancel can surface in any copy region, so watch both throughout
     OBSide* sides[2] = { &bid, &ask };
 
+    // each leg's op must also pull the OTHER leg's cancel target if it lands on the same crossed
+    // level - the copy ranges watch both cancels, but an op consuming its level would otherwise
+    // leave the co-leg's cancelled order behind (a ghost that later phantom-fills and double-frees)
+    u32 bid_co_cancel = (ask.is_can_rep | ask.is_cancel) ? ask.cancel_id : MAX_U32;
+    u32 ask_co_cancel = (bid.is_can_rep | bid.is_cancel) ? bid.cancel_id : MAX_U32;
+
     ob_copy_range(old_runner, new_runner, 0, bid.lui, sides, 2);
-    ob_apply_op(&bid, old_mbo, old_runner, new_runner, fills);
+    ob_apply_op(&bid, old_mbo, old_runner, new_runner, fills, bid_co_cancel);
     ob_copy_range(old_runner, new_runner, bid.hui + 1, ask.lui, sides, 2);
-    ob_apply_op(&ask, old_mbo, old_runner, new_runner, fills);
+    ob_apply_op(&ask, old_mbo, old_runner, new_runner, fills, ask_co_cancel);
     ob_copy_range(old_runner, new_runner, ask.hui + 1, old_mbo->level_count, sides, 2);
 
     // hi_bid_index = (bid levels in the new book) - 1, counted region by region:
@@ -1052,7 +1020,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     OBSide* sides[1] = { &side };
     ob_copy_range(old_runner, new_runner, 0, lui, sides, 1);
     // do the op in the middle
-    u16 hbi = ob_apply_op(&side, old_mbo, old_runner, new_runner, fills);
+    u16 hbi = ob_apply_op(&side, old_mbo, old_runner, new_runner, fills, MAX_U32);
 
     // copy in the higher untouched block, splicing the cancel if it lives up here
     ob_copy_range(old_runner, new_runner, hui + 1, old_mbo->level_count, sides, 1);
