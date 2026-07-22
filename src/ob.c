@@ -234,7 +234,11 @@ void mbo_fill_remove(MBORunner* old, MBORunner* new, u16 price, u32 remaining_qu
     out_level->order_count = out;
 }
 
-// used for cancellations
+// used for cancellations. the cancel is matched by id, so the count written is the number of
+// entries actually carried over - never old_count - 1. an id that is missing (already filled
+// out from under the cancel) or that appears more than once would otherwise leave the level
+// declaring more entries than were written, and the surplus reads whatever the reused buffer
+// last held: a ghost order that the crossing walk in ob_affected_range will happily fill
 void mbo_splice_level(MBORunner* old, MBORunner* new, u32 cancel_id) {
     new->metadata->price = old->metadata->price;
     new->metadata->quantity = old->metadata->quantity; // for now
@@ -255,7 +259,7 @@ void mbo_splice_level(MBORunner* old, MBORunner* new, u32 cancel_id) {
 
         j++;
     }
-    new->level->order_count = mod_level->order_count - 1;
+    new->level->order_count = j;
 }
 
 // this COULD return somethign based on if we have more or not
@@ -452,6 +456,7 @@ u32 ob_expire(CB* cancels, u32 n, void* old_mbo_raw, void* new_mbo_raw) {
 void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                        u8 is_can_rep, u8 is_cancel, u32 cancel_id,
                        u16 cancel_index, u8 cancel_was_sole,
+                       Order* co_can, u32 co_cancel_id,
                        u16* lui, u16* hui, u8* op_type,
                        u16* modified_level, u16* remaining_out, CB* fills) {
 
@@ -561,6 +566,14 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                     // book, so if we subtract, the quantity really is on this level
                     if (is_can_rep && old_level->price == can->price)
                         effective_level_quantity -= can->quantity;
+                    // the other leg of a pair is pulling its own target, which can be resting
+                    // right here. it is not ours to trade with, so it comes off this level's
+                    // size for the same reason ours does - mbo_fill_remove already does this
+                    // for the level we only bite into (cancel_id2), and a level we swallow
+                    // whole needs it just as much. without it the co-leg's target is filled
+                    // AND retired as a cancel, so its id is handed back twice
+                    if (co_can && old_level->price == co_can->price)
+                        effective_level_quantity -= co_can->quantity;
 
                     if (effective_level_quantity >= remaining_quantity) {
                         untouched_above = current_level;
@@ -576,6 +589,9 @@ void ob_affected_range(MBO* old_mbo, Order* rep, Order* can,
                         for (u16 i = 0; i < mod_level->order_count; i++) {
                             MBOEntry * entry = mod_level->entries + i;
                             if (is_can_rep && entry->order_id == cancel_id)
+                                continue;
+                            // cancelled by the other leg: pulled, never filled (see above)
+                            if (entry->order_id == co_cancel_id)
                                 continue;
                             Fill f = { 
                                 .order_id = entry->order_id,
@@ -850,12 +866,17 @@ void ob_side_init(OBSide* s, FL* orders, MBO* old_mbo, u32 order_id) {
         ob_locate_cancel(old_mbo, s, (Order*)fl_get(orders, s->cancel_id));
 }
 
-// run a side through ob_affected_range, filling in its lui/hui/op_type/etc.
-void ob_side_range(OBSide* s, FL* orders, MBO* old_mbo, CB* fills) {
+// run a side through ob_affected_range, filling in its lui/hui/op_type/etc. `co` is the pair's
+// other leg (0 for a single order) - whatever it is cancelling is off limits to this leg
+void ob_side_range(OBSide* s, OBSide* co, FL* orders, MBO* old_mbo, CB* fills) {
     Order* can = (s->is_can_rep | s->is_cancel) ? (Order*)fl_get(orders, s->cancel_id) : 0;
+    u8 co_pulls = co && (co->is_can_rep | co->is_cancel);
+    Order* co_can = co_pulls ? (Order*)fl_get(orders, co->cancel_id) : 0;
+    u32 co_cancel_id = co_pulls ? co->cancel_id : MAX_U32;
     ob_affected_range(old_mbo, s->rep, can,
                       s->is_can_rep, s->is_cancel, s->cancel_id,
                       s->cancel_index, s->cancel_was_sole,
+                      co_can, co_cancel_id,
                       &s->lui, &s->hui, &s->op_type,
                       &s->modified_level, &s->remaining, fills);
 }
@@ -872,8 +893,8 @@ u32 ob_pair(FL* orders, u32 bid_order_id, u32 ask_order_id, void* old_mbo_raw, v
     ob_side_init(&bid, orders, old_mbo, bid_order_id);
     ob_side_init(&ask, orders, old_mbo, ask_order_id);
 
-    ob_side_range(&bid, orders, old_mbo, fills);
-    ob_side_range(&ask, orders, old_mbo, fills);
+    ob_side_range(&bid, &ask, orders, old_mbo, fills);
+    ob_side_range(&ask, &bid, orders, old_mbo, fills);
 
     // serialization form: [0, bid_lui) bid_op (bid_hui, ask_lui) ask_op (ask_hui, end]
     u16 level_count = bid.lui
@@ -965,7 +986,7 @@ u32 ob_canrep(FL* orders, u32 order_id, void* old_mbo_raw, void* new_mbo_raw, CB
     // one side: resolve the cancel, then find its affected range
     OBSide side = {0};
     ob_side_init(&side, orders, old_mbo, order_id);
-    ob_side_range(&side, orders, old_mbo, fills);
+    ob_side_range(&side, 0, orders, old_mbo, fills);
 
     // handy aliases for the level_count bookkeeping below
     u16 lui = side.lui;

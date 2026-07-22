@@ -1692,6 +1692,15 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         // we should genuinely update teh order->quantity because cancels rely on it
         //printf("in order q before %u for id %u\n", in->quantity, exec_order_id);
         //printf("resting q before %u for id %u\n", order->quantity, fill->order_id);
+        // quantity is a u16. an over-fill wraps it to ~65k here and the u32 filled below to
+        // ~4.29bn, and both sides then settle that: the client's position model and the
+        // engine's own. the book and the fills disagreeing is not something to trade through
+        if (q > taker->quantity) {
+            printf("over-fill: taker #%u has %ush left, fill #%u is %ush\n",
+                    taker_id, taker->quantity, fill->order_id, q);
+            exit(1);
+        }
+
         order->quantity -= q;
         // its either do it here, or have the ob file take on even more responsibility for handling stuff
         taker->quantity -= q;
@@ -1762,7 +1771,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     // ioc - ob already dropped the residual, so wipe it here to match. the client still learns exactly
     // how much filled from quantity_filled on the response, and leaving it on would reserve
     // cash/shares below for quantity that isn't in the book
-    u32 filled = before_quantity - in->quantity;
+    // clamped, not just subtracted: quantity is a u16 and this is a u32, so a taker that
+    // somehow came back larger than it went in would report a multi-billion-share fill
+    u32 filled = before_quantity > in->quantity ? before_quantity - in->quantity : 0;
+    u32 ask_filled = (is_pair && before_ask_quantity > ask_in->quantity)
+            ? before_ask_quantity - ask_in->quantity : 0;
     if (!is_gtc)
         in->quantity = 0;
 
@@ -1913,7 +1926,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     //printf("scheduling response %u\n", exec_order_id);
     if (is_pair)
         // both legs, one delivery, each with its own filled quantity
-        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, ask_order_id, ask_in->price, (before_ask_quantity - ask_in->quantity), rej_reason);
+        schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, ask_order_id, ask_in->price, ask_filled, rej_reason);
     else if (is_stop)
         // combined stop: the NOW half's result plus the resting leg's id in one delivery
         schedule_pair_response(sc, in->client_id, status, exec_order_id, in->price, filled, stop_order_id, in->stop_price, 0, rej_reason);
