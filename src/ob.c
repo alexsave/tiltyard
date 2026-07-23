@@ -741,31 +741,109 @@ u8 ob_op_covers(u16 idx, u16 lui, u16 hui) {
     return (u16)(idx - lui) < (u16)(hui - lui + 1);
 }
 
+// bulk-copy `count` levels starting wherever both runners are sitting, with nothing spliced out.
+// level payloads are laid out contiguously in index order - mbo_jump walks them by size, which is
+// only consistent with byte_offset if they are - so a whole run of untouched levels is one memcpy
+// instead of one per level. the index entries still have to be written, but every byte_offset in
+// the run shifts by the SAME delta, because both source and destination are contiguous
+static void ob_copy_span(MBORunner* old, MBORunner* new, u16 count) {
+    if (!count)
+        return;
+
+    MBOIndex* src = old->metadata;
+    MBOIndex* last = src + (count - 1);
+    MBOLevel* last_level = (MBOLevel*)(old->data_start + last->byte_offset);
+    u32 span = last->byte_offset + _mbo_level_size(last_level->order_count) - src->byte_offset;
+
+    // signed: a splice earlier in this book makes the destination the shorter of the two
+    i64 delta = (i64)(((void*)new->level) - new->data_start) - (i64)src->byte_offset;
+
+    memcpy(new->level, old->level, span);
+
+    MBOIndex* dst = new->metadata;
+    for (u16 i = 0; i < count; i++) {
+        dst[i].price = src[i].price;
+        dst[i].quantity = src[i].quantity;
+        dst[i].byte_offset = (u32)((i64)src[i].byte_offset + delta);
+    }
+
+    new->level = ((void*)new->level) + span;
+    new->metadata += count;
+    new->index += count;
+
+    old->level = ((void*)old->level) + span;
+    old->metadata += count;
+    old->index += count;
+}
+
+// one level that a watched cancel lands on: splice the cancelled order out, drop the level if that
+// order was the only one on it, or fall through to a plain copy if the price does not actually
+// match. this is the original per-level body, now reached only for the few levels that need it
+static void ob_copy_cut(MBORunner* old, MBORunner* new, OBSide** sides, u8 n_sides) {
+    u8 spliced = 0;
+    for (u8 s = 0; s < n_sides; s++) {
+        OBSide* sd = sides[s];
+        if ((sd->is_can_rep | sd->is_cancel) && old->metadata->price == sd->cancel_price) {
+            if (sd->cancel_was_sole){
+                //skip level
+            } else {
+                mbo_splice_level(old, new, sd->cancel_id);
+                mbo_jump(new);
+            }
+            spliced = 1;
+            break;
+        }
+    }
+    if (!spliced) {
+        mbo_copy_level(old, new);
+        mbo_jump(new);
+    }
+    mbo_jump(old);
+}
+
 // copy old levels [from, to) into new, splicing out any watched cancel that shows up
-// (up to two, so the pair can watch both the bid and ask cancels in one pass)
+// (up to two, so the pair can watch both the bid and ask cancels in one pass).
+//
+// a range is almost always dozens of untouched levels around at most two spliced ones, so rather
+// than walking level by level we locate the cuts up front and bulk-copy the runs between them.
+// ob_locate_cancel already resolved each cancel to its level index, so "is it in this range" is a
+// bounds check rather than a price compare per level. an index that is stale or never resolved can
+// only add a spurious cut, and a cut still re-checks the price - so it copies, same as before
 void ob_copy_range(MBORunner* old, MBORunner* new, u16 from, u16 to, OBSide** sides, u8 n_sides) {
     mbo_to_index(old, from);
-    for (u16 i = from; i < to; i++) {
-        u8 spliced = 0;
-        for (u8 s = 0; s < n_sides; s++) {
-            OBSide* sd = sides[s];
-            if ((sd->is_can_rep | sd->is_cancel) && old->metadata->price == sd->cancel_price) {
-                if (sd->cancel_was_sole){
-                    //skip level
-                } else {
-                    mbo_splice_level(old, new, sd->cancel_id);
-                    mbo_jump(new);
-                }
-                spliced = 1;
-                break;
-            }
-        }
-        if (!spliced) {
-            mbo_copy_level(old, new);
-            mbo_jump(new);
-        }
-        mbo_jump(old);
+    if (to <= from)
+        return;   // empty range, but the caller still wants old parked at `from`
+
+    u16 cut[2];
+    u8 n_cut = 0;
+    for (u8 s = 0; s < n_sides; s++) {
+        OBSide* sd = sides[s];
+        if (!(sd->is_can_rep | sd->is_cancel))
+            continue;
+        u16 ci = sd->cancel_index;
+        if (ci < from || ci >= to)
+            continue;
+        // both legs can name the same level - that is one cut, handled by whichever side matches
+        // first, exactly as the single pass used to
+        u8 dup = 0;
+        for (u8 k = 0; k < n_cut; k++)
+            dup |= (cut[k] == ci);
+        if (!dup)
+            cut[n_cut++] = ci;
     }
+    if (n_cut == 2 && cut[0] > cut[1]) {
+        u16 swap = cut[0];
+        cut[0] = cut[1];
+        cut[1] = swap;
+    }
+
+    u16 at = from;
+    for (u8 k = 0; k < n_cut; k++) {
+        ob_copy_span(old, new, cut[k] - at);
+        ob_copy_cut(old, new, sides, n_sides);
+        at = cut[k] + 1;
+    }
+    ob_copy_span(old, new, to - at);
 }
 
 // serialize one side's op into new_runner. old_runner must be sitting at s->lui.

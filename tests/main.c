@@ -17,6 +17,7 @@
 #include "test_imbalance.h"
 #include "test_mbp.h"
 #include "test_canrep_release.h"
+#include "test_copy_range.h"
 
 
 int main(int argc, char* argv[]){
@@ -70,6 +71,18 @@ int main(int argc, char* argv[]){
     test_pair_cancel_same_id_rejected();
 
     test_pair_cross_spares_co_leg_cancel();
+
+    test_copy_range_no_cut();
+
+    test_copy_range_cut_middle();
+
+    test_copy_range_cut_first();
+
+    test_copy_range_cut_last();
+
+    test_copy_range_sole_cut_drops_level();
+
+    test_copy_range_two_cuts_one_range();
 
     //test_fl();
 
