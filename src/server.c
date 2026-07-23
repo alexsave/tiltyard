@@ -23,6 +23,27 @@
 #include "trade.h"
 
 // yeah you need these two to initialize the server, cuz really it initalizes everything
+// repack live_roster from stream_roster. every tier at once, because the packed layout means one
+// tier's range shifts the next one's. scanning in roster order keeps each range ascending by
+// client_id, which is the order the old ws-testing scan visited them in - so broadcasts are
+// emitted in exactly the same sequence and the sim stays deterministic
+static void stream_roster_rebuild(ServerContext* sc) {
+    cb_clear(sc->live_roster);
+
+    for (u8 t = 0; t < TIER_COUNT; t++) {
+        sc->live_offset[t] = cb_count(sc->live_roster);
+
+        u32 end = sc->tier_offset[t + 1];
+        for (u32 i = sc->tier_offset[t]; i < end; i++) {
+            u32 cid = sc->stream_roster[i];
+            if (sc->client_settings[cid].ws)
+                cb_queue(sc->live_roster, &cid);
+        }
+    }
+
+    sc->live_offset[TIER_COUNT] = cb_count(sc->live_roster);
+}
+
 ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed){
     ServerContext* sc = malloc(sizeof(ServerContext));
 
@@ -112,7 +133,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     // kinda orthogonal stream
 
     // build the stream roster: client_ids bucketed by sub_tier, tier_offset marking each range.
-    // built once; ws state is read live at send time (see emit_closed_candle)
+    // built once; the ws-connected subset is derived from it into live_roster below
     u32 client_count = sc->ho->num_clients;
     sc->stream_roster = malloc(client_count * sizeof(u32));
     sc->tier_offset = malloc((TIER_COUNT + 1) * sizeof(u32));
@@ -124,6 +145,10 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
                 sc->stream_roster[write_idx++] = c;
     }
     sc->tier_offset[TIER_COUNT] = write_idx;
+
+    sc->live_roster = cb_init(sizeof(u32));
+    sc->live_offset = malloc((TIER_COUNT + 1) * sizeof(u32));
+    stream_roster_rebuild(sc);
 
     // map each tier to its data structure so a broadcast's u8 tier resolves in one index
     sc->tier_source = malloc(TIER_COUNT * sizeof(void*));
@@ -211,18 +236,21 @@ void server_stream(ServerContext* sc) {
     ClientSettings* cs = sc->client_settings;
 
     u32 blob_ids[4] = {sc->last_mbo, sc->last_mbp, sc->last_mbp10, sc->last_mbp1};
-    for (u8 t = TIER_MBO; t <= TIER_MBP1; t++)
-        for (u32 i = sc->tier_offset[t]; i < sc->tier_offset[t + 1]; i++) {
-            u32 cid = sc->stream_roster[i];
-            if (!cs[cid].will_notify && cs[cid].ws)
+    for (u8 t = TIER_MBO; t <= TIER_MBP1; t++) {
+        u32 end = sc->live_offset[t + 1];
+        for (u32 i = sc->live_offset[t]; i < end; i++) {
+            u32 cid = *(u32*)cb_at(sc->live_roster, i);
+            if (!cs[cid].will_notify)
                 schedule_stream_response(sc, cid, t, blob_ids[t]);
         }
+    }
 
     if (!cb_is_empty(sc->trades)) {
         u32 offset = cb_count(sc->trades) - 1;
-        for (u32 i = sc->tier_offset[TIER_TRADE]; i < sc->tier_offset[TIER_TRADE + 1]; i++) {
-            u32 cid = sc->stream_roster[i];
-            if (!cs[cid].will_notify && cs[cid].ws)
+        u32 end = sc->live_offset[TIER_TRADE + 1];
+        for (u32 i = sc->live_offset[TIER_TRADE]; i < end; i++) {
+            u32 cid = *(u32*)cb_at(sc->live_roster, i);
+            if (!cs[cid].will_notify)
                 schedule_stream_response(sc, cid, TIER_TRADE, offset);
         }
     }
@@ -1352,6 +1380,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
             why = REJ_NO_WS_ACCESS;
         } else if (pending_ws) {
             pcs->ws = !(pcs->ws);
+            stream_roster_rebuild(sc);
             ctl |= (1 << WS_BIT);
         }
 
@@ -1394,6 +1423,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         rej_reason = REJ_NO_WS_ACCESS;
     } else if (is_toggle_ws) {
         cs->ws = !(cs->ws);
+        stream_roster_rebuild(sc);
         status |= (1 << WS_BIT);
     }
     u8 is_ping = (in->status >> PING_BIT) & 1;
@@ -2231,11 +2261,9 @@ static void emit_closed_candle(ServerContext* sc, CB* candles, u64 duration, u8 
 
     // the just-closed bar is the tail; hand its offset to every ws client subscribed to this tier
     u32 offset = cb_count(candles) - 1;
-    for (u32 i = sc->tier_offset[tier]; i < sc->tier_offset[tier + 1]; i++) {
-        u32 client_id = sc->stream_roster[i];
-        if (sc->client_settings[client_id].ws)
-            schedule_stream_response(sc, client_id, tier, offset);
-    }
+    u32 end = sc->live_offset[tier + 1];
+    for (u32 i = sc->live_offset[tier]; i < end; i++)
+        schedule_stream_response(sc, *(u32*)cb_at(sc->live_roster, i), tier, offset);
 }
 
 // fired once a second while the market is open. the second just ended, and any longer duration
@@ -2423,6 +2451,8 @@ void server_free(ServerContext* sc) {
     cb_free(sc->notified);
     free(sc->stream_roster);
     free(sc->tier_offset);
+    cb_free(sc->live_roster);
+    free(sc->live_offset);
     free(sc->tier_source);
     cb_free(sc->sw_queue);
     cb_free(sc->hw_queue);

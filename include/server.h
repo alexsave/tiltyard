@@ -141,11 +141,18 @@ typedef struct ServerContext {
     // flags. queued once per schedule_response, drained and cleared once per stream
     CB* notified;
 
-    // stream roster: client_ids grouped by sub_tier, built once and never mutated (ws
-    // connect/disconnect is read live at send time). tier_offset is CSR - tier t owns
-    // stream_roster[tier_offset[t] .. tier_offset[t+1]).
+    // stream roster: client_ids grouped by sub_tier, built once and never mutated. tier_offset
+    // is CSR - tier t owns stream_roster[tier_offset[t] .. tier_offset[t+1]). this is the full
+    // membership list; broadcasts go through live_roster below, and this is what it is rebuilt
+    // from, so it has to stay in ascending client_id order
     u32* stream_roster;
     u32* tier_offset;
+
+    // the ws-connected subset of the above, packed, with live_offset as its CSR index. only ~80
+    // of 1421 subscribers ever connect, so rebuilt on a ws toggle rather than re-derived on every
+    // book change. filled by scanning stream_roster in order, so broadcast order is unchanged
+    CB* live_roster;
+    u32* live_offset;
 
     // TIER_COUNT entries mapping a tier to its data structure: a BS* for blob tiers (0-3),
     // a CB* for the trade/candle buffers (4-8). a broadcast response's u8 tier indexes this.
