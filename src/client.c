@@ -5,7 +5,9 @@
 #include "strategy/client_one.h"
 
 TypeMetadata* get_types() {
-    TypeMetadata* tm = malloc(sizeof(TypeMetadata));
+    // calloc: the X below reads IMPLS_COUNT before anything writes it, so it has to start at 0.
+    // malloc leaves it indeterminate, which -O2 and up fold into garbage indices
+    TypeMetadata* tm = calloc(1, sizeof(TypeMetadata));
 
     #define X(name) tm->name ## _index = tm->IMPLS_COUNT; tm->IMPLS_COUNT++;
     IMPLS

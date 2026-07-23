@@ -3,7 +3,7 @@ OBJDIR := out
 OUTSRCS := $(filter-out src/main.c, $(shell find src -name '*.c'))
 OUTOBJS := $(addprefix $(OBJDIR)/, $(notdir $(OUTSRCS:.c=.o)))
 
-FLAGS := -g -MMD -MP -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
+FLAGS := -g -O3 -MMD -MP -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
 
 VPATH := $(sort $(dir $(OUTSRCS)))
 
