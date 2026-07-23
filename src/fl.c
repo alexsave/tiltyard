@@ -33,14 +33,14 @@ FL* fl_init(uint8_t type_size, u32 id_limit) {
     return fl;
 }
 
-// you can just put whatever in here
-uint32_t fl_insert(FL* fl, void* data) {
+// the limit and capacity prologue shared by fl_insert and fl_next_id. once it returns,
+// fl->stack[fl->sp + 1] exists and is the id the next insert will take
+static void fl_ready(FL* fl) {
     if (fl->sp == fl->id_limit) {
         // really we won't be checking max_u32, we will be checking for this log
         // if it appears we will fix things to avoid it
         printf("reached id limit, rearchitect freelist, %u\n", fl->id_limit);
         exit(1);
-        return MAX_U32;
     }
 
     // we're about to get id from fl->sp + 1
@@ -50,8 +50,6 @@ uint32_t fl_insert(FL* fl, void* data) {
         if ((fl->capacity << 1) == 0) {
             printf("completely out of capacity. rearchitect freelist\n");
             exit(1);
-            // return some bogus
-            return ((fl->capacity - 1) << 1) + 1;
         }
 
         u32* doubled_stack = malloc(2 * fl->capacity * sizeof(u32));
@@ -78,6 +76,20 @@ uint32_t fl_insert(FL* fl, void* data) {
         
         fl->capacity <<= 1;
     }
+}
+
+// the id fl_insert would hand out, without handing it out or writing anything. lets a caller
+// promise a client "this is the id your order will have" and only pay for the insert if the
+// client actually produces one. nothing may insert into this fl between the peek and the
+// matching insert - a release in particular pushes an id back and would change the answer
+u32 fl_next_id(FL* fl) {
+    fl_ready(fl);
+    return fl->stack[fl->sp + 1];
+}
+
+// you can just put whatever in here
+uint32_t fl_insert(FL* fl, void* data) {
+    fl_ready(fl);
 
     fl->sp = fl->sp + 1;
     //printf("incrementing sp %u\n", fl->sp);

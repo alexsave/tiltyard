@@ -167,12 +167,13 @@ int main(int argc, char* argv[]){
             u32 snapshot_id = response.snapshot_id;
             u32 status = response.status;
 
-            Order tmp = {};
-            u32 new_order_id = fl_insert(orders, &tmp);
-            Order* empty = fl_get(orders, new_order_id);
-
-            context->next_order_id = new_order_id;
-            context->next_order_ptr = empty;
+            // scratch the client writes its order into, plus the id that order WOULD get. the
+            // slot itself is not taken yet: nearly every wake-up returns no order, and reserving
+            // one each time meant an fl_insert zero-filling a cold freelist slot and an
+            // fl_release handing it straight back, on every single delivery event
+            context->next_order = (Order){0};
+            context->next_order_id = fl_next_id(orders);
+            context->next_order_ptr = &context->next_order;
 
             context->status = status;
             context->quantity_filled = response.quantity_filled;
@@ -236,6 +237,19 @@ int main(int argc, char* argv[]){
             context->next_wake_ns = client_settings[client_id].next_wake_ns;
             u8 action = holder_client_on_snapshot(ho, client_id, context);
 
+            // take the slot the client was promised, and take it BEFORE the releases below.
+            // fl_release pushes ids back onto the free stack, so inserting afterwards would mint
+            // whichever id was just handed back rather than the one the client recorded.
+            // a client that wanted nothing costs nothing here - there is no slot to give back
+            if (action & 1) {
+                context->next_order.client_id = client_id;
+                u32 new_order_id = fl_insert(orders, &context->next_order);
+                u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (new_order_id & PARAM_MASK);
+                u64 delay = client_settings[client_id].processing_time;
+
+                sch_schedule(sch, order_event, delay);
+            }
+
             // they've read the response order id, so hand its slot back for any terminal
             // outcome that left nothing resting in the book under that id:
             //  - rejected, or a ping/ws control ack: the message never reached the book
@@ -260,18 +274,6 @@ int main(int argc, char* argv[]){
             // and reports second_order_id as MAX_U32, so only reap it when the pair was accepted.
             if (rested_nothing_cancel && ((status >> ASK_BID_PAIR_BIT) & 1) && !((status >> REJECT_BIT) & 1))
                 fl_release(orders, response.second_order_id);
-
-            if (action & 1){
-                empty->client_id = client_id;
-                //empty->flags = 0;
-                u64 order_event = ((CLIENT_OUT_TYPE & T_MASK) << PARAM_BITS) | (new_order_id & PARAM_MASK);
-                u64 delay = client_settings[client_id].processing_time;
-
-                sch_schedule(sch, order_event, delay);
-            } else {
-                //printf("reeasing order id\n");
-                fl_release(orders, new_order_id);
-            }
 
             // second bit set, for a wakeup call
             // only lands if it beats the wake already pending: arming one per event is what breeds

@@ -22,7 +22,11 @@ typedef struct Context {
     u16 second_price;
     u32 second_quantity_filled;
 
-    // next order info
+    // next order info. next_order is the scratch the client fills in, and next_order_ptr points
+    // at it - it is NOT a slot in the order freelist. most wake-ups produce no order at all, so
+    // the slot is only taken (and this copied into it) once the handler says it wants one.
+    // next_order_id is what that slot's id WILL be, peeked ahead so a client can record it
+    Order next_order;
     u32 next_order_id;
     Order* next_order_ptr;
     u32 random;

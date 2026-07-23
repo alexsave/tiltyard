@@ -28,6 +28,10 @@ FL* fl_init(u8 type_size, u32 id_limit);
 
 u32 fl_insert(FL* fl, void* data);
 
+// the id the next fl_insert will return, without taking it. valid only until the next insert
+// or release on this fl
+u32 fl_next_id(FL* fl);
+
 void* fl_release(FL* fl, u32 id);
 
 // get without releasing
