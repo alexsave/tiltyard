@@ -127,7 +127,8 @@ uint64_t pq_pop(PQ* pq) {
         uint32_t right = left + 1;
 
         //if (debug2) printf("left %llu pq current %llu run %llu right  %llu\n", left, pq->current, run, right);
-        if (right >= pq->current && left >= pq->current) {
+        //4 > 3 && 3 > 3  ... 5 > 3 && 4 > 3 ... 3 > 3 && 2 > 3
+        if (left >= pq->current) {
             // gottem
             heap[run] = last_copy;
             break;
