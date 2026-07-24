@@ -145,6 +145,12 @@ typedef struct ServerContext {
 
     u64* rand;
 
+    // lazy derive bookkeeping: book_version ticks on every mbo swap, mbp_derived_version
+    // remembers which version the price views were last cut from. mbp_ensure compares the
+    // two and derives only when someone actually pins an mbp-tier view of a changed book
+    u64 book_version;
+    u64 mbp_derived_version;
+
     // mirror of MBO
     u32 last_mbp;
     BS* mbp_bs;
@@ -220,6 +226,10 @@ void server_exec_to_sw(ServerContext* sc);
 
 // replay the deferred run log to stdout. call before server_free
 void server_log_dump(ServerContext* sc);
+
+// derive the mbp views if the book moved since they were last cut. pin sites call this
+// through tier_blob_id; tests call it directly before reading sc->last_mbp* raw
+void mbp_ensure(ServerContext* sc);
 
 void server_free(ServerContext* sc);
 

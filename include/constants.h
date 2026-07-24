@@ -3,7 +3,11 @@
 
 #include "types.h"
 
-static const u64 P_BITS = 39; 
+// bucket span in bits of ns. 32 -> ~4.3s per bucket: with 64 buckets that's a ~4.6min fast
+// horizon, and each bucket's heap holds ~1/128th of what the old 39-bit/8-bucket layout
+// crammed into one - sift depth and cache misses drop with it. anything farther out rides
+// the slow (seconds) bucket and gets pumped into the wheel as it comes into range
+static const u64 P_BITS = 32;
 static const u64 P_SPAN = (u64)1 << P_BITS;
 static const u64 P_MASK = P_SPAN - 1;
 
@@ -17,7 +21,7 @@ static const u64 E_BITS = FULL_SIZE_BITS - P_BITS;
 static const u64 E_MASK = ((u64)1 << E_BITS) - 1;
 
 // number of fast buckets
-static const u8 BUCKET_BITS = 3;
+static const u8 BUCKET_BITS = 6;
 static const u8 SCH_BUCKETS = 1 << BUCKET_BITS;
 static const u8 BUCKET_MASK = SCH_BUCKETS - 1;
 

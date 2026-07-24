@@ -3,7 +3,10 @@ OBJDIR := out
 OUTSRCS := $(filter-out src/main.c, $(shell find src -name '*.c'))
 OUTOBJS := $(addprefix $(OBJDIR)/, $(notdir $(OUTSRCS:.c=.o)))
 
-FLAGS := -g -O3 -MMD -MP -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
+# -flto tried here, dropped: out/test bus-errors partway through (miscompile), not worth chasing
+# add -DLOG_TRADES_ONLY to FLAGS (or: make main FLAGS="$(FLAGS) -DLOG_TRADES_ONLY") to skip
+# LOG_ORDER run-log records and keep only LOG_TRADE - off by default, same stdout either way
+FLAGS := -g -O3 -mcpu=native -MMD -MP -Wunused-function -Wunused-label -Wunused-value -Wunused-variable -Wunused-parameter -Wunused-but-set-parameter -ferror-limit=100
 
 VPATH := $(sort $(dir $(OUTSRCS)))
 

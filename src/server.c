@@ -151,6 +151,10 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     ((MBP*)mbp1_address)->level_count = 0;
     ((MBP*)mbp1_address)->hi_bid_index = MAX_U16;
 
+    // the empty init blobs above ARE version 0's views, so the lazy derive starts satisfied
+    sc->book_version = 0;
+    sc->mbp_derived_version = 0;
+
     // Trades won't actually use blob store as they are will actually be stored for the entire duration
     // CB is fine for this and candles
     // kinda orthogonal stream
@@ -202,10 +206,23 @@ static u8 client_blob_tier(ServerContext* sc, u32 client_id) {
     return tier <= TIER_MBP1 ? tier : TIER_MBO;
 }
 
+// the price views are derived lazily: book changes only tick book_version, and the actual
+// mbp/mbp10/mbp1 cut happens here, at most once per version, the first time someone pins
+// one. a cycle whose consumers are all mbo-tier (the apex churn) never pays for them
+void mbp_ensure(ServerContext* sc) {
+    if (sc->mbp_derived_version == sc->book_version)
+        return;
+    sc->mbp_derived_version = sc->book_version;
+    mbp_derive(sc);
+}
+
 static u32 tier_blob_id(ServerContext* sc, u8 blob_tier) {
-    if (blob_tier == TIER_MBP)   return sc->last_mbp;
-    if (blob_tier == TIER_MBP10) return sc->last_mbp10;
-    if (blob_tier == TIER_MBP1)  return sc->last_mbp1;
+    if (blob_tier == TIER_MBP || blob_tier == TIER_MBP10 || blob_tier == TIER_MBP1) {
+        mbp_ensure(sc);
+        if (blob_tier == TIER_MBP)   return sc->last_mbp;
+        if (blob_tier == TIER_MBP10) return sc->last_mbp10;
+        return sc->last_mbp1;
+    }
     return sc->last_mbo;
 }
 
@@ -258,13 +275,35 @@ void schedule_stream_response(ServerContext* sc, u32 client_id, u8 tier, u32 ind
 void server_stream(ServerContext* sc) {
     ClientSettings* cs = sc->client_settings;
 
-    u32 blob_ids[4] = {sc->last_mbo, sc->last_mbp, sc->last_mbp10, sc->last_mbp1};
     for (u8 t = TIER_MBO; t <= TIER_MBP1; t++) {
         u32 end = sc->live_offset[t + 1];
-        for (u32 i = sc->live_offset[t]; i < end; i++) {
+        u32 i = sc->live_offset[t];
+        if (i == end)
+            continue; // nobody streams this tier, so its view is never derived for it
+        // resolving through tier_blob_id is what triggers the lazy mbp derive - only now,
+        // when a subscriber is actually about to pin this tier's view of the changed book
+        u32 blob = tier_blob_id(sc, t);
+        for (; i < end; i++) {
             u32 cid = *(u32*)cb_at(sc->live_roster, i);
-            if (!cs[cid].will_notify)
-                schedule_stream_response(sc, cid, t, blob_ids[t]);
+            if (cs[cid].will_notify)
+                continue;
+            if (!cs[cid].stream_in_flight) {
+                cs[cid].stream_in_flight = 1;
+                schedule_stream_response(sc, cid, t, blob);
+            } else {
+                // conflate: a delivery is already in the air, and by the time it lands only
+                // the newest book is worth acting on - the intermediate never ships. swap
+                // the pending pin to this snapshot and let main.c chain it when the one in
+                // the air lands. arrival keeps latency honest: the newest change still
+                // can't be seen before now + this client's own wire time
+                if (cs[cid].stream_pending_valid)
+                    bs_get((BS*)sc->tier_source[cs[cid].stream_pending_tier], cs[cid].stream_pending_snapshot);
+                bs_bump_refs((BS*)sc->tier_source[t], blob);
+                cs[cid].stream_pending_valid = 1;
+                cs[cid].stream_pending_tier = t;
+                cs[cid].stream_pending_snapshot = blob;
+                cs[cid].stream_pending_arrival = sch_now_ns(sc->sch) + calculate_jitter(cs + cid, sc->rand);
+            }
         }
     }
 
@@ -318,7 +357,7 @@ u8 cancel_precheck(Order* in, FL* orders, MBO* mbo) {
     // but we can jump directly there
     for (u16 i = 0; i < mbo->level_count; i++) {
         MBOIndex * mboi = mbo->levels + i;
-        if (mboi->price != to_cancel->price) 
+        if (mboi->price != to_cancel->price)
             continue;
 
         u32 offset = mboi->byte_offset;
@@ -1117,10 +1156,9 @@ void auction_consume_book(ServerContext* sc, u8 is_buy, u32 shares, u16 clearing
     sc->last_mbo = next_mbo;
     bs_resize(mbo_bs, new_size);
 
-    // squash the post-cross book into the price tiers before any response below pins one, same
-    // ordering the continuous path uses - otherwise an mbp subscriber is handed its fill next to
-    // a touch that still shows the depth the cross just consumed
-    mbp_derive(sc);
+    // the post-cross book is a new version - the price tiers re-derive lazily the moment a
+    // response below pins one, so an mbp subscriber still gets its fill next to the fresh touch
+    sc->book_version++;
 
     // each maker settles at the clearing price (not its resting price), gives its reserve back,
     // and gets a fill notification just like a continuous maker would
@@ -1608,7 +1646,10 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
     }
 
     // captured, not printed - see LogRec. the account fields are snapshotted here because the
-    // line reports them as of acceptance and cs moves on immediately afterwards
+    // line reports them as of acceptance and cs moves on immediately afterwards.
+    // -DLOG_TRADES_ONLY skips LOG_ORDER records entirely (most of the ~26M/run) when only the
+    // LOG_TRADE lines are needed downstream; off by default so behavior is unchanged
+#ifndef LOG_TRADES_ONLY
     LogRec lr = {
         .kind = LOG_ORDER,
         .now_ns = now_ns,
@@ -1627,6 +1668,7 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         .second_direction = in->second_direction,
     };
     cb_queue(sc->log, &lr);
+#endif
 
 
     // ok at this point I think can now handle stop orders
@@ -1781,11 +1823,11 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
 
     bs_resize(mbo_bs, new_size);
 
-    // squash the new book into its price-aggregated tiers here rather than at the end of the
-    // pass: every response scheduled below pins its own subscription's view of the book, and
-    // the maker fills come first. derived any later and a maker would be handed the previous
-    // touch alongside the fill that moved it. nothing between here and there touches the mbo
-    mbp_derive(sc);
+    // the book moved: tick the version and let the price tiers re-derive lazily. every
+    // response scheduled below pins its own subscription's view through tier_blob_id, which
+    // derives on first touch of the new version - so a maker still gets the fresh touch
+    // alongside the fill that moved it, and a pass whose consumers are all mbo pays nothing
+    sc->book_version++;
 
     // ^ but this is just for our client of incoming order
     // we still need to go through and fill the orders we hit
@@ -2156,7 +2198,7 @@ void server_prune_book(ServerContext* sc) {
         cb_deque(sc->expire_cb);
 
 
-    mbp_derive(sc);
+    sc->book_version++;
 
 
     //void* new_mbp_raw;

@@ -41,7 +41,12 @@ void sch_schedule_slow(SCH* sch, uint64_t event, uint64_t delta_ns) {
     }
 
     uint64_t absolute_ns = now_ns + delta_ns;
-    uint64_t absolute_s = absolute_ns / S_TO_NS;
+    // round UP to the second: a slow event may fire late (the pump adds spreading jitter
+    // anyway) but never early. flooring here let a wake land before the fire time its owner
+    // recorded in next_wake_ns - the arrival then failed the >= clear, the client believed
+    // a wake was still pending, never re-armed, and slept forever. the bells are scheduled
+    // on whole seconds, so for them the ceil is the floor and they stay exact
+    uint64_t absolute_s = (absolute_ns + S_TO_NS - 1) / S_TO_NS;
 
     //printf("maxns %llu, now_ns %llu, absolute_ns %llu, absolute_s %llu\n", max_ns, now_ns, absolute_ns, absolute_s);
 
@@ -172,8 +177,12 @@ uint64_t sch_pop(SCH* sch) {
 
         uint64_t current_time = (sch->current_bucket << P_BITS) + (next >> E_BITS);
 
-        // if an event is between "now" and "now + max_delta, we reschedule
-        uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 1);
+        // if an event is between "now" and "now + max_delta, we reschedule.
+        // buckets-MINUS-TWO, one span short of the wheel's true reach: the second-truncation
+        // and the spreading jitter below can push a migrated event up to ~1.5s past its slow
+        // timestamp, and with the smaller spans that could wrap past the wheel and fire a
+        // whole lap early. the pump period shortens to match so nothing matures unmigrated
+        uint64_t max_delta = P_SPAN * (SCH_BUCKETS - 2);
 
         uint64_t latest_threshold = (current_time + max_delta)/S_TO_NS;
 
@@ -188,17 +197,24 @@ uint64_t sch_pop(SCH* sch) {
 
             uint64_t pop = pq_pop(sch->slow_bucket);
 
-            uint64_t seconds = peek_ts * S_TO_NS;
-
-            uint8_t bucket = (seconds >> P_BITS) & BUCKET_MASK;
-            uint64_t priority = seconds & P_MASK;
+            uint64_t jittered = peek_ts * S_TO_NS;
 
             // the session bells (open, close, the two auction starts, and the freeze) ring on
-            // their exact second; everything else keeps the spreading jitter
+            // their exact second; everything else keeps the spreading jitter. the jitter goes
+            // into the ABSOLUTE time before the bucket/offset split - added to the offset
+            // alone it could overflow the span and land a whole lap off
             if (!(((pop >> PARAM_BITS) & T_MASK) == CONTROL_TYPE && (pop & PARAM_MASK) >= CONTROL_PARAM_AUCTION_FREEZE)) {
                 rand_next(sch->rand);
-                priority += (((*sch->rand) & MAX_U32) >> 3);
+                jittered += (((*sch->rand) & MAX_U32) >> 3);
             }
+
+            // second-truncation can pull an event behind now, and behind now can mean behind
+            // the current bucket's start - which the wheel reads as a full lap in the future
+            if (jittered <= current_time)
+                jittered = current_time + 1;
+
+            uint8_t bucket = (jittered >> P_BITS) & BUCKET_MASK;
+            uint64_t priority = jittered & P_MASK;
 
             pq_push(sch->buckets[bucket], (priority << E_BITS) | (pop & E_MASK));
 

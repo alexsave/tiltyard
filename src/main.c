@@ -37,39 +37,41 @@ int main(int argc, char* argv[]){
     // t1 flickerers: 20-50 registered mms in us equities, but only a handful move the
     // needle - citadel securities ~25% of volume, virtu ~20%, then jane street, jump,
     // hrt, imc, optiver, two sigma
-    client_allocations[tm->t1_index] = 8;
+    // scaled to the TOP of each tier's sim range in TILTYARD_AGENTS.md - the full population,
+    // with t7/t10 at the doc's "millions, slow scheduler" architecture stress test
+    client_allocations[tm->t1_index] = 20;
     // t2 snipers: nasdaq's hft dataset identifies ~120 firms; heavily overlapping t1, since
     // the same desks often run both sides. 12 is that overlap plus a few pure takers
-    client_allocations[tm->t2_index] = 12;
+    client_allocations[tm->t2_index] = 30;
     // t3 slicers: ~100s of algo providers and ~1000s of systematic funds, but the unit that
     // matters is parent orders in flight, not firms - one desk runs many at once
-    client_allocations[tm->t3_index] = 40;
+    client_allocations[tm->t3_index] = 150;
     // t4 suits: ~32k hedge funds worldwide but ~550 firms hold 86% of the capital, so the
     // handful that move a name is low hundreds. the informed flow - trades toward fundamental
-    client_allocations[tm->t4_index] = 60;
+    client_allocations[tm->t4_index] = 100;
     // t5 degens: ~450k active US day traders; doc says 100s-1000s in sim. momentum retail -
     // the crash amplifier, and the protective-sell-stop population that fuels the cascade
-    client_allocations[tm->t5_index] = 200;
+    client_allocations[tm->t5_index] = 2000;
     // t9 oracles: true value pickers are professionally rare, doc says 10s-100s. deep
     // contrarian capital anchored to fundamental - THE arresting loop, the crash floor
-    client_allocations[tm->t9_index] = 100;
+    client_allocations[tm->t9_index] = 500;
     // t13 glaciers: US public pensions ~5000+, SWFs ~100, endowments in the hundreds; doc
     // says 10s-100s. target-weight money, the largest pool in the sim - THE CEILING, since
     // a mandate sells more the further price runs, and a floor only ever needs cash
-    client_allocations[tm->t13_index] = 20;
+    client_allocations[tm->t13_index] = 500;
     // everything below is written but not yet switched on - counts come up one at a time
     // t7 tappers: tens of millions of accounts (robinhood alone ~25M funded). uninformed
     // near-pure-taker flow, the background informed flow is informed against
-    client_allocations[tm->t7_index] = 100;
+    client_allocations[tm->t7_index] = 1000000;
     // t8 setters: low-to-mid millions, a behavioural slice not a registry count. the only
     // retail tier that RESTS - patient limits at support, and a second stop field under it
-    client_allocations[tm->t8_index] = 1000;
+    client_allocations[tm->t8_index] = 5000;
     // t10 metronomes: 100M+ individuals, the largest tier by headcount and the smallest by
     // flow each. price-insensitive payroll buying - a permanent structural bid
-    client_allocations[tm->t10_index] = 100;
+    client_allocations[tm->t10_index] = 1000000;
     // t12 tides: dozens of managers, hundreds-to-1000s of funds; doc says 5-50. the MOC
     // flow that makes the closing auction the biggest liquidity event of the day
-    client_allocations[tm->t12_index] = 20;
+    client_allocations[tm->t12_index] = 50;
     // t14 dmms: ~3-5 firms, ONE assigned per nyse name, so 1 is the correct count here.
     // the imbalance sink that pairs against t12 - only meaningful once tides are running
     client_allocations[tm->t14_index] = 1;
@@ -212,6 +214,27 @@ int main(int argc, char* argv[]){
                 else
                     context->data_snapshot = cb_at((CB*)sc->tier_source[response.tier], snapshot_id);
                 context->order_id = response.order_id;
+                // conflated book stream: this delivery just landed, freeing the one-in-the-air
+                // slot. if newer snapshots piled up behind it, chain exactly one delivery
+                // carrying the newest, no earlier than its own arrival time - the pin it holds
+                // transfers to the chained response and comes back via the bs_get above when
+                // that one lands in its turn
+                if (response.tier <= TIER_MBP1) {
+                    ClientSettings* ccs = client_settings + client_id;
+                    if (ccs->stream_pending_valid) {
+                        Response chain = {.tier = ccs->stream_pending_tier,
+                                          .snapshot_id = ccs->stream_pending_snapshot,
+                                          .client_id = client_id,
+                                          .status = 1u << BROADCAST_BIT, .order_id = MAX_U32};
+                        u32 chain_id = fl_insert(responses, &chain);
+                        u64 arrival = ccs->stream_pending_arrival;
+                        u64 delay = arrival > context->real_time_ns ? arrival - context->real_time_ns : 0;
+                        sch_schedule(sch, build_event(CLIENT_IN_TYPE, chain_id), delay);
+                        ccs->stream_pending_valid = 0;
+                    } else {
+                        ccs->stream_in_flight = 0;
+                    }
+                }
             } else if (client_settings[client_id].sub_tier == TIER_FREE) {
                 // free tier gets no book, just the last trade price already on the context -
                 // but still release the ref schedule_response took, same as every other path

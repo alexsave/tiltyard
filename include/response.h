@@ -40,6 +40,9 @@ static const u8 REJ_OFFSET_ONLY = 15;
 
 static const u8 REJ_OTHER = 99;
 
+// field order is widest-first so the u32s pack with no interior holes: 7x4 + 2x2 + 2x1 = 36
+// bytes, down from 44 with the old interleaving. every response is memcpy'd into the freelist
+// and back out at delivery, so the trimmed 8 bytes ride the hottest copy path in the sim
 typedef struct Response {
     // client id may actually be 23 bits, so maybe we put flags into the top bits
     u32 client_id;
@@ -48,21 +51,22 @@ typedef struct Response {
 
     u32 snapshot_id;// blob id for a blob broadcast, buffer offset for a trade/candle broadcast
 
-    // a broadcast's tier - indexes sc->tier_source to the BS* (blob, bs_get) or CB* (buffer,
-    // cb_at) it came from, resolved at delivery so a store that moves mid-flight stays safe
-    u8 tier;
-
     // all about the order this response is about
     u32 order_id;// this might be in response to an order, set to U32MAX if this is broadcast
     u32 status;
     u32 quantity_filled;
-    u16 price;
 
     // for atomic bid+ask pairs: the ask leg, delivered in this same response
     // (MAX_U32 order id when there is no second leg; filled stays 0 while pairs are non-crossing)
     u32 second_order_id;
-    u16 second_price;
     u32 second_quantity_filled;
+
+    u16 price;
+    u16 second_price;
+
+    // a broadcast's tier - indexes sc->tier_source to the BS* (blob, bs_get) or CB* (buffer,
+    // cb_at) it came from, resolved at delivery so a store that moves mid-flight stays safe
+    u8 tier;
 
     u8 rej_reason;
 } Response;

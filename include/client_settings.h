@@ -44,6 +44,16 @@ typedef struct ClientSettings {
     // NOII imbalance feed, an add-on billed on top of the base sub_tier
     u8 noii;
 
+    // conflated book stream (blob tiers only): at most one delivery event in the air per
+    // client. while one is in flight, newer snapshots only overwrite the pending slot (the
+    // pin swaps with them), and the fire path in main.c chains the newest one at its own
+    // arrival time. calloc's zero-init reads as idle with nothing pending, which is right
+    u8 stream_in_flight;
+    u8 stream_pending_valid;
+    u8 stream_pending_tier;
+    u32 stream_pending_snapshot;
+    u64 stream_pending_arrival;
+
 } ClientSettings;
 
 #endif

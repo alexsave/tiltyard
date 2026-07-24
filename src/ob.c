@@ -100,8 +100,15 @@ u32 _mbo_level_size(u16 order_count) {
 }
 
 // hope that works
+// mbor_init is always called exactly twice per top-level ob_* op (old then new), never nested,
+// single-threaded - so a 2-slot static pool replaces the malloc/free pair with no growth needed,
+// since MBORunner is a small fixed-size struct regardless of book size
+static MBORunner mbor_pool[2];
+static u8 mbor_pool_idx = 0;
+
 MBORunner * mbor_init(MBO* mbo) {
-    MBORunner * mbor = malloc(sizeof(MBORunner));
+    MBORunner * mbor = &mbor_pool[mbor_pool_idx];
+    mbor_pool_idx ^= 1;
 
     mbor->mbo = mbo;
     mbor->metadata = mbo->levels;
@@ -445,8 +452,7 @@ u32 ob_expire(CB* cancels, u32 n, void* old_mbo_raw, void* new_mbo_raw) {
     }
 
     u32 new_size = ((void*)(new_runner->level)) - new_mbo_raw;
-    free(old_runner);
-    free(new_runner);
+    // old_runner/new_runner are pooled statics now (see mbor_init), nothing to free
     return new_size;
 }
 

@@ -51,22 +51,19 @@ void pq_push(PQ* pq, uint64_t event) {
     
     uint32_t run = pq->current;
 
-    while (1) {
-        //parent
-        //equals very very unlikely you'll see why 
-        if (run == 1 || pq->heap[run >> 1] <= event) { 
-            pq->heap[run] = event;
+    // 4-ary now: parent of j is ((j-2)>>2)+1, so the tree is half as deep as the binary one
+    // was and a sift touches half the cache lines. pop order is unchanged - keys are unique
+    // (every event carries a distinct id in its low bits), so min-extraction order is fully
+    // determined by key order no matter the heap shape
+    while (run > 1) {
+        uint32_t parent = ((run - 2) >> 2) + 1;
+        //equals very very unlikely you'll see why
+        if (pq->heap[parent] <= event)
             break;
-        } else {
-            pq->heap[run] = pq->heap[run >> 1];
-            run = run >> 1;
-        }
+        pq->heap[run] = pq->heap[parent];
+        run = parent;
     }
-
-        //for(u8 i = 0; i < pq->current + 1; i++){
-            //printf("%llu ", pq->heap[i]);
-        //}
-        //printf("\n");
+    pq->heap[run] = event;
 
     pq->current = pq->current + 1;
 }
@@ -114,74 +111,38 @@ uint64_t pq_pop(PQ* pq) {
     heap[pq->current] = 0;
     // just to be safe, ya never know
 
-
-    while(1){
-        //if(debug2){
-            //for(u8 i = 0; i < pq->current + 1; i++){
-                //printf("%i: %llu\n", i, pq->heap[i]);
-            //}
-            //printf("\n");
-        //}   
-
-        uint32_t left = (run << 1);
-        uint32_t right = left + 1;
-
-        //if (debug2) printf("left %llu pq current %llu run %llu right  %llu\n", left, pq->current, run, right);
-        //4 > 3 && 3 > 3  ... 5 > 3 && 4 > 3 ... 3 > 3 && 2 > 3
-        if (left >= pq->current) {
-            // gottem
+    // 4-ary sift-down: children of i sit at 4i-2 .. 4i+1, adjacent, so the four loads land
+    // in one or two cache lines instead of a fresh line per level like the old binary walk
+    while (1) {
+        uint32_t first = (run << 2) - 2;
+        if (first >= pq->current) {
+            // no children, gottem
             heap[run] = last_copy;
             break;
         }
-        uint64_t left_e = heap[left];
+        uint32_t end = first + 4;
+        if (end > pq->current)
+            end = pq->current;
 
-        if (right >= pq->current) {
-            // only right out of bounds
-
-            if (left_e < last_copy) {
-                // swap
-                heap[run] = left_e;
-                heap[left] = last_copy;
-            } else {
-                heap[run] = last_copy;
+        uint32_t best = first;
+        uint64_t best_e = heap[first];
+        for (uint32_t k = first + 1; k < end; k++) {
+            if (heap[k] < best_e) {
+                best = k;
+                best_e = heap[k];
             }
-            // else we're still done anyways, as we have one child and its >= last_copy
-            break;
         }
 
-        // e for event btw
-        uint64_t right_e = heap[right];
-
-        // normal case
-        // it has to be the case that both the value at left & right is 
-
-        //if (debug2) printf("left e %llu last copy %llu right e %llu\n", left_e, last_copy, right_e);
-        // I think it's really just two, but I ned to test properly yes
-        if (right_e > last_copy && left_e > last_copy) {
-            //if(debug2) printf("where we need to be\n");
-            // exactly where we need to be
-            // did you forget to write buddy?????????????
+        if (best_e >= last_copy) {
+            // smallest child doesn't beat it, this is home
             heap[run] = last_copy;
             break;
-        } else {
-            // very likely case
-            // swap with lower one and update "run" properly
-            if (right_e <= left_e) {
-                // move right
-                heap[run] = right_e;
-                run = right;
-            } else {
-                // move left
-                heap[run] = left_e;
-                run = left;
-            } // what if they're equal? unlikely, but we'll go right
         }
 
+        // very likely case: pull the smallest child up and keep walking down
+        heap[run] = best_e;
+        run = best;
     }
-    //for(u8 i = 0; i < pq->current + 1; i++){
-        //printf("%llu ", pq->heap[i]);
-    //}
-    //printf("\n");
 
     return event;
 }

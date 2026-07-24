@@ -48,6 +48,10 @@ void test_mbp() {
     mbp_limit(sc, 1, 1, 101, 3); // bid
     mbp_limit(sc, 1, 1, 102, 2); // bid (best bid)
 
+    // the views derive lazily now - reading sc->last_mbp* raw needs an ensure first, the
+    // same one every pin site goes through
+    mbp_ensure(sc);
+
     // show what the three views look like for this book
     mbp_dump(bs_get_no_ref(sc->mbp_bs, sc->last_mbp));
     mbp10_dump(bs_get_no_ref(sc->mbp10_bs, sc->last_mbp10));
@@ -86,6 +90,7 @@ void test_mbp() {
     // --- lifting the best ask moves the top of book, and the views follow
     mbp_limit(sc, 1, 1, 105, 4); // buy 4 @ 105 fully consumes the 105 ask
 
+    mbp_ensure(sc);
     mbp1 = (MBP1*)bs_get_no_ref(sc->mbp1_bs, sc->last_mbp1);
     assert(mbp1->lo_ask.price == 106 && mbp1->lo_ask.quantity == 6); // best ask rolled up
     assert(mbp1->hi_bid.price == 102 && mbp1->hi_bid.quantity == 2); // best bid unchanged
