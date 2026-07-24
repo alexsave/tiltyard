@@ -23,6 +23,28 @@
 #include "trade.h"
 
 // yeah you need these two to initialize the server, cuz really it initalizes everything
+// write the captured run log out raw. no formatting at all - integer-to-decimal conversion for
+// ~26M records was 12% of the whole run, and none of it is work the simulation needs done. the
+// records go out exactly as they sit in memory and `logdump` turns them back into the old text
+void server_log_dump(ServerContext* sc) {
+    u32 n = cb_count(sc->log);
+    if (!n)
+        return;
+
+    FILE* f = fopen(LOG_BIN_PATH, "wb");
+    if (!f) {
+        printf("could not open %s for the run log\n", LOG_BIN_PATH);
+        return;
+    }
+
+    // append-only ring - nothing is ever dequeued from this one - so start is 0 and all n
+    // records sit contiguous from the base. that makes the whole dump a single fwrite
+    fwrite(cb_at(sc->log, 0), sizeof(LogRec), n, f);
+    fclose(f);
+
+    printf("run log: %u records -> %s\n", n, LOG_BIN_PATH);
+}
+
 // repack live_roster from stream_roster. every tier at once, because the packed layout means one
 // tier's range shifts the next one's. scanning in roster order keeps each range ascending by
 // client_id, which is the order the old ws-testing scan visited them in - so broadcasts are
@@ -105,6 +127,7 @@ ServerContext* server_init(TypeMetadata* tm, u32 * client_allocations, u64 seed)
     sc->candles_day = cb_init(sizeof(Candle));
     sc->imbalances = cb_init(sizeof(Imbalance));
     sc->notified = cb_init(sizeof(u32));
+    sc->log = cb_init(sizeof(LogRec));
 
     sc->orders = fl_init(sizeof(Order), MIN_RESERVED_PACKET);
     sc->fills = cb_init(sizeof(Fill));
@@ -1584,21 +1607,26 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         }
     }
 
-    printf("[%llus] order #%u ", now_ns/S_TO_NS, exec_order_id);
-    printf("client #%u [$%lld/$%u/%lldq/%uq] ", in->client_id, cs->cash, cs->reserved_cash, cs->shares, cs->reserved_shares);
-    if (is_cancel) {
-        printf("cancel order #%u ", in->other_id);
-    } else if (is_stop) {
-        if (in->quantity > 0)
-            printf("%s %s %ush @ $%u + ", ((in->status >> IS_MARKET_BIT) & 1) ? "market" : "limit", is_buy ? "buy" : "sell", in->quantity, in->price);
-        printf("stop %s %s %ush trigger $%u ", ((in->status >> STOP_LIMIT_BIT) & 1) ? "limit" : "market", in->second_direction ? "buy" : "sell", in->second_quantity, in->stop_price);
-    } else {
-        printf("%s %s %ush @ $%u ", ((in->status >> IS_MARKET_BIT) & 1) ? "market" : "limit", is_buy ? "buy" : "sell", in->quantity, in->price);
-        if (is_can_rep) {
-            printf("+ cancel order %u ", in->other_id);
-        }
-    }
-    printf("\n");
+    // captured, not printed - see LogRec. the account fields are snapshotted here because the
+    // line reports them as of acceptance and cs moves on immediately afterwards
+    LogRec lr = {
+        .kind = LOG_ORDER,
+        .now_ns = now_ns,
+        .order_id = exec_order_id,
+        .client_id = in->client_id,
+        .cash = cs->cash,
+        .reserved_cash = cs->reserved_cash,
+        .shares = cs->shares,
+        .reserved_shares = cs->reserved_shares,
+        .other_id = in->other_id,
+        .status = in->status,
+        .price = in->price,
+        .quantity = in->quantity,
+        .stop_price = in->stop_price,
+        .second_quantity = in->second_quantity,
+        .second_direction = in->second_direction,
+    };
+    cb_queue(sc->log, &lr);
 
 
     // ok at this point I think can now handle stop orders
@@ -1783,7 +1811,16 @@ void server_order(ServerContext* sc, u32 exec_order_id) {
         last_trade_price = order->price;
 
         // later for trade table: we just need direction, price, quantity, time
-        printf("TRADE buy %u p %u q %u id %u now %llu part %u\n", taker_is_buy, order->price, q, fill->order_id, now_ns, fill->partial);
+        LogRec tr = {
+            .kind = LOG_TRADE,
+            .now_ns = now_ns,
+            .order_id = fill->order_id,
+            .quantity_filled = q,
+            .price = order->price,
+            .partial = fill->partial,
+            .taker_is_buy = taker_is_buy,
+        };
+        cb_queue(sc->log, &tr);
         update_trade(sc, q, order->price, taker_is_buy);
 
         // the cancelled trade cannot show up here
@@ -2449,6 +2486,7 @@ void server_free(ServerContext* sc) {
     cb_free(sc->candles_day);
     cb_free(sc->imbalances);
     cb_free(sc->notified);
+    cb_free(sc->log);
     free(sc->stream_roster);
     free(sc->tier_offset);
     cb_free(sc->live_roster);

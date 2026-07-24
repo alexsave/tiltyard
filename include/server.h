@@ -46,6 +46,38 @@ typedef struct LegCost {
 // bundled into a struct
 // also takes it off the stack and onto the beautiful heap
 // if it seems like a lot note that this is THE "global" object
+// one line of the run log, deferred. LOG_ORDER carries everything the accepted-order line prints,
+// including the account snapshot, because that is read at print time and the account moves on.
+// status is the raw Order.status so the flag tests stay where they were rather than being
+// re-encoded into bools. 64 bytes, which is one cache line per record
+#define LOG_ORDER 0
+#define LOG_TRADE 1
+
+// where server_log_dump writes the raw records. `make logdump && ./logdump` turns it back into
+// the text the inline printfs used to emit
+#define LOG_BIN_PATH "tiltyard.bin"
+
+typedef struct LogRec {
+    u64 now_ns;
+    i64 cash;
+    i64 shares;
+    u32 order_id;
+    u32 client_id;
+    u32 reserved_cash;
+    u32 reserved_shares;
+    u32 other_id;
+    u32 status;
+    u32 quantity_filled;   // trade only
+    u16 price;
+    u16 quantity;
+    u16 stop_price;
+    u16 second_quantity;
+    u8  kind;
+    u8  second_direction;
+    u8  partial;           // trade only
+    u8  taker_is_buy;      // trade only
+} LogRec;
+
 typedef struct ServerContext {
 
     u32* client_allocations;
@@ -135,6 +167,12 @@ typedef struct ServerContext {
     // add-on subscribers. append-only like the candles, so it reads back as a flat array
     CB* imbalances;
 
+    // the run log, captured rather than printed. formatting an accepted order took 4-9 separate
+    // printf calls in the hot path, and at ~26M records that was 12% of total runtime spent in
+    // vfprintf/ultoa/write. one memcpy of a LogRec here instead, formatted once at the end.
+    // orders and trades share the buffer so their relative order survives
+    CB* log;
+
     // scratch: the client_ids that had will_notify set this cycle, so the reset at the end of
     // server_stream touches only them. clearing the flag used to mean walking every client on
     // every book change, which profiled at a fifth of total runtime for a handful of real
@@ -179,6 +217,9 @@ void server_hw_to_sw(ServerContext* sc);
 void server_exec_end(ServerContext* sc);
 void server_exec_start(ServerContext* sc);
 void server_exec_to_sw(ServerContext* sc);
+
+// replay the deferred run log to stdout. call before server_free
+void server_log_dump(ServerContext* sc);
 
 void server_free(ServerContext* sc);
 

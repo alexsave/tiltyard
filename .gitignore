@@ -6,3 +6,5 @@ tiltyard
 f
 **/*.DS_Store
 *.d
+*.bin
+logdump

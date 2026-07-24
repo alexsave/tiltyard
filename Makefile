@@ -25,6 +25,9 @@ clean:
 test: $(OUTOBJS)
 	gcc $(FLAGS) -I include/ tests/main.c $(OUTOBJS) -o out/test && ./out/test
 
+logdump: $(OUTOBJS)
+	gcc $(FLAGS) -I include/ tools/logdump.c $(OUTOBJS) -o ./logdump
+
 main: $(OUTOBJS)
 	gcc $(FLAGS) -I include/ src/main.c $(OUTOBJS) -o ./tiltyard && ./tiltyard
 

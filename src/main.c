@@ -397,6 +397,8 @@ int main(int argc, char* argv[]){
 
     mbo_dump(bs_get_no_ref(sc->mbo_bs, sc->last_mbo));
 
+    server_log_dump(sc);
+
     server_free(sc);
 
     return 0;
